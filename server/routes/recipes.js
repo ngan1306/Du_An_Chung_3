@@ -147,18 +147,26 @@ router.get('/:id', authOptional, async (req, res, next) => {
       LEFT JOIN users u ON u.id=r.user_id WHERE r.id=?`, req.params.id);
     if (!r || (!r.is_public && (!req.user || req.user.id !== r.user_id)))
       return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y cÃ´ng thá»©c' });
-    await exec('UPDATE recipes SET views=views+1 WHERE id=?', [r.id]);
+    const [ingredients, steps, isFavorite, ratings] = await Promise.all([
+      query('SELECT * FROM recipe_ingredients WHERE recipe_id=? ORDER BY id', r.id),
+      query('SELECT * FROM recipe_steps WHERE recipe_id=? ORDER BY step_order', r.id),
+      req.user
+        ? get('SELECT 1 x FROM favorites WHERE user_id=? AND recipe_id=?', req.user.id, r.id)
+        : Promise.resolve(null),
+      query(
+        `SELECT rt.*, u.username, u.avatar, u.display_name,
+        (SELECT COUNT(*) FROM comment_likes cl WHERE cl.rating_id=rt.rowid) likes
+        FROM ratings rt JOIN users u ON u.id=rt.user_id WHERE rt.recipe_id=? ORDER BY rt.created_at DESC`,
+        r.id,
+      ),
+      exec('UPDATE recipes SET views=views+1 WHERE id=?', r.id),
+    ]);
     r.views += 1;
     const data = mapRecipeCards([r])[0];
-    data.ingredients = await query('SELECT * FROM recipe_ingredients WHERE recipe_id=? ORDER BY id', r.id);
-    data.steps = await query('SELECT * FROM recipe_steps WHERE recipe_id=? ORDER BY step_order', r.id);
-    data.is_fav = req.user ? !!(await get('SELECT 1 x FROM favorites WHERE user_id=? AND recipe_id=?', req.user.id, r.id)) : false;
-    data.ratings = await query(
-      `SELECT rt.*, u.username, u.avatar, u.display_name,
-      (SELECT COUNT(*) FROM comment_likes cl WHERE cl.rating_id=rt.rowid) likes
-      FROM ratings rt JOIN users u ON u.id=rt.user_id WHERE rt.recipe_id=? ORDER BY rt.created_at DESC`,
-      r.id,
-    );
+    data.ingredients = ingredients;
+    data.steps = steps;
+    data.is_fav = !!isFavorite;
+    data.ratings = ratings;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -184,17 +192,33 @@ async function saveRecipe(req, res, existing) {
       prep_minutes,cook_minutes,servings,difficulty,calories,protein,carbs,fat,diet,is_public)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [req.user.id, ...fields])).insertId;
     }
-    await exec('DELETE FROM recipe_ingredients WHERE recipe_id=?', id);
-    await exec('DELETE FROM recipe_steps WHERE recipe_id=?', id);
-    for (const i of (b.ingredients || [])) {
-      if (i && i.name) {
-        await exec('INSERT INTO recipe_ingredients (recipe_id,name,quantity,unit) VALUES (?,?,?,?)', [id, i.name, i.quantity || '', i.unit || '']);
-        await exec('IF NOT EXISTS (SELECT 1 FROM ingredients WHERE name=?) INSERT INTO ingredients (name) VALUES (?)', [i.name, i.name]);
-      }
+    await Promise.all([
+      exec('DELETE FROM recipe_ingredients WHERE recipe_id=?', id),
+      exec('DELETE FROM recipe_steps WHERE recipe_id=?', id),
+    ]);
+    const ingredients = (b.ingredients || []).filter((item) => item && item.name);
+    for (let start = 0; start < ingredients.length; start += 500) {
+      const batch = ingredients.slice(start, start + 500);
+      const values = batch.map(() => '(?,?,?,?)').join(',');
+      await exec(
+        `INSERT INTO recipe_ingredients (recipe_id,name,quantity,unit) VALUES ${values}`,
+        batch.flatMap((item) => [id, item.name, item.quantity || '', item.unit || '']),
+      );
+      await exec(
+        batch.map(() =>
+          'IF NOT EXISTS (SELECT 1 FROM ingredients WHERE name=?) INSERT INTO ingredients (name) VALUES (?)',
+        ).join(';'),
+        batch.flatMap((item) => [item.name, item.name]),
+      );
     }
-    let so = 0;
-    for (const t of (b.steps || [])) {
-      if (t && String(t).trim()) await exec('INSERT INTO recipe_steps (recipe_id,step_order,text) VALUES (?,?,?)', [id, ++so, t]);
+    const steps = (b.steps || []).filter((step) => step && String(step).trim());
+    for (let start = 0; start < steps.length; start += 500) {
+      const batch = steps.slice(start, start + 500);
+      const values = batch.map(() => '(?,?,?)').join(',');
+      await exec(
+        `INSERT INTO recipe_steps (recipe_id,step_order,text) VALUES ${values}`,
+        batch.map((text, index) => [id, start + index + 1, text]).flat(),
+      );
     }
     log(req.user.id, existing ? 'edit_recipe' : 'create_recipe', `recipe #${id} ${b.title}`);
     res.json({ id, ok: true });
@@ -222,8 +246,8 @@ router.delete('/:id', authRequired, async (req, res) => {
 
 // Cong thuc cua toi
 router.get('/mine/list', authRequired, async (req, res) => {
-  res.json(await Promise.all(
-    (await query('SELECT * FROM recipes WHERE user_id=? ORDER BY created_at DESC', req.user.id)).map(enrich),
+  res.json(mapRecipeCards(
+    await query(`${recipeCardsSql} WHERE r.user_id=? ORDER BY r.created_at DESC`, req.user.id),
   ));
 });
 
@@ -253,8 +277,8 @@ router.post('/:id/favorite', authRequired, async (req, res, next) => {
 });
 
 router.get('/favorites/list', authRequired, async (req, res) => {
-  res.json(await Promise.all(
-    (await query('SELECT r.* FROM favorites f JOIN recipes r ON r.id=f.recipe_id WHERE f.user_id=?', req.user.id)).map(enrich),
+  res.json(mapRecipeCards(
+    await query(`${recipeCardsSql} JOIN favorites f ON f.recipe_id=r.id WHERE f.user_id=?`, req.user.id),
   ));
 });
 
@@ -272,10 +296,14 @@ router.post('/collections', authRequired, async (req, res) => {
 router.get('/collections/list', authRequired, async (req, res) => {
   try {
     const cols = await query('SELECT * FROM collections WHERE user_id=?', req.user.id);
-    for (const c of cols)
-      c.items = await Promise.all(
-        (await query('SELECT r.* FROM collection_items ci JOIN recipes r ON r.id=ci.recipe_id WHERE ci.collection_id=?', c.id)).map(enrich),
+    await Promise.all(cols.map(async (c) => {
+      c.items = mapRecipeCards(
+        await query(
+          `${recipeCardsSql} JOIN collection_items ci ON ci.recipe_id=r.id WHERE ci.collection_id=?`,
+          c.id,
+        ),
       );
+    }));
     res.json(cols);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -311,8 +339,15 @@ router.post('/collections/:id/items', authRequired, async (req, res) => {
 router.get('/collections/share/:token', async (req, res) => {
   const c = await get('SELECT * FROM collections WHERE share_token=?', req.params.token);
   if (!c) return res.status(404).json({ error: 'Bá»™ sÆ°u táº­p khÃ´ng tá»“n táº¡i' });
-  res.json({ name: c.name, items: await Promise.all(
-    (await query('SELECT r.* FROM collection_items ci JOIN recipes r ON r.id=ci.recipe_id WHERE ci.collection_id=?', c.id)).map(enrich)) });
+  res.json({
+    name: c.name,
+    items: mapRecipeCards(
+      await query(
+        `${recipeCardsSql} JOIN collection_items ci ON ci.recipe_id=r.id WHERE ci.collection_id=?`,
+        c.id,
+      ),
+    ),
+  });
 });
 
 // ---- Danh gia & binh luan ----
@@ -365,12 +400,13 @@ router.post('/reports', authRequired, async (req, res) => {
 router.get('/history/list', authRequired, async (req, res) => {
   const logs = await query("SELECT TOP 20 detail FROM activity_logs WHERE user_id=? AND action='view_recipe' ORDER BY id DESC", req.user.id);
   const ids = [...new Set(logs.map(l => (l.detail.match(/#(\d+)/) || [])[1]).filter(Boolean))];
-  const rows = [];
-  for (const i of ids) {
-    const r = await get('SELECT * FROM recipes WHERE id=?', i);
-    if (r) rows.push(r);
-  }
-  res.json(await Promise.all(rows.map(enrich)));
+  if (!ids.length) return res.json([]);
+  const rows = await query(
+    `${recipeCardsSql} WHERE r.id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  const byId = new Map(mapRecipeCards(rows).map((recipe) => [String(recipe.id), recipe]));
+  res.json(ids.map((id) => byId.get(id)).filter(Boolean));
 });
 
 // ---- Social ----
@@ -399,11 +435,16 @@ router.get('/users/:id', async (req, res) => {
       contact: { phone: adminContact.phone, email: adminContact.email },
     });
   }
-  u.recipes = await Promise.all(
-    (await query('SELECT * FROM recipes WHERE user_id=? AND is_public=1 AND approved=1', u.id)).map(enrich));
-  u.followers = (await get('SELECT COUNT(*) c FROM follows WHERE following_id=?', u.id)).c;
-  u.following = (await get('SELECT COUNT(*) c FROM follows WHERE follower_id=?', u.id)).c;
-  u.posts = await query("SELECT p.*, u.username FROM posts p JOIN users u ON u.id=p.user_id WHERE p.user_id=? AND p.approved=1 ORDER BY p.created_at DESC", u.id);
+  const [recipes, followers, following, posts] = await Promise.all([
+    query(`${recipeCardsSql} WHERE r.user_id=? AND r.is_public=1 AND r.approved=1`, u.id),
+    get('SELECT COUNT(*) c FROM follows WHERE following_id=?', u.id),
+    get('SELECT COUNT(*) c FROM follows WHERE follower_id=?', u.id),
+    query("SELECT p.*, u.username FROM posts p JOIN users u ON u.id=p.user_id WHERE p.user_id=? AND p.approved=1 ORDER BY p.created_at DESC", u.id),
+  ]);
+  u.recipes = mapRecipeCards(recipes);
+  u.followers = followers.c;
+  u.following = following.c;
+  u.posts = posts;
   res.json(u);
 });
 

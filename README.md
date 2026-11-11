@@ -75,6 +75,14 @@ Xem dữ liệu trong SSMS: kết nối `DESKTOP-UQULP3N\SQLEXPRESS` → databas
 - **Liên hệ quản trị viên**: công khai hotline và Gmail; hồ sơ Vũ Thanh Ngân chỉ hiển thị thông tin liên hệ. Mục Quản trị chỉ dành cho tài khoản admin.
 - **Quản trị**: dashboard thống kê, thêm/sửa/xóa tài khoản, công thức, danh mục và nguyên liệu; khóa/mở khóa và phân quyền; duyệt công thức, quản lý bình luận và báo cáo, gửi thông báo toàn hệ thống, xem nhật ký hoạt động. Xóa tài khoản sẽ xóa nội dung liên quan nhưng giữ nhật ký quản trị.
 
+## Tối ưu hiệu năng
+
+- Tải dữ liệu các khu vực trang chủ đồng thời và dùng chung kết quả danh sách món nổi bật/popular.
+- Truy vấn danh sách và gợi ý công thức kèm danh mục, đánh giá, lượt yêu thích và tác giả trong cùng truy vấn, tránh gọi lặp cơ sở dữ liệu cho từng món.
+- Tải nguyên liệu, các bước, lượt đánh giá và trạng thái yêu thích của trang chi tiết đồng thời.
+- Tải danh sách công thức, bộ sưu tập, hồ sơ và lịch sử theo nhóm để giảm truy vấn tuần tự.
+- Khi lưu công thức, chèn nguyên liệu và các bước theo lô tối đa 500 dòng mỗi truy vấn.
+
 ## Ảnh món ăn
 
 Ảnh công thức mẫu dùng ảnh chụp lưu cục bộ trong `public/img/`; nguồn ảnh và thông tin từng công thức bổ sung được lưu trong `server/db/sample-recipes-600.json` và ghi tại [IMAGE_CREDITS.md](./IMAGE_CREDITS.md).
