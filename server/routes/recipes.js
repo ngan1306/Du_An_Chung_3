@@ -13,15 +13,29 @@ const adminContact = Object.freeze({
 // wrapper dam bao bat moi loi async -> 500 thay vi treo request
 const aw = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-async function enrich(r) {
-  const cat = await get('SELECT name FROM categories WHERE id=?', r.category_id);
-  r.category = cat ? cat.name : '';
-  const avg = await get('SELECT AVG(CAST(stars AS FLOAT)) a, COUNT(*) c FROM ratings WHERE recipe_id=?', r.id);
-  r.avg_rating = avg && avg.a ? Math.round(avg.a * 10) / 10 : 0;
-  r.rating_count = avg ? avg.c : 0;
-  r.fav_count = (await get('SELECT COUNT(*) c FROM favorites WHERE recipe_id=?', r.id)).c;
-  r.author = await get('SELECT id,username,display_name,avatar FROM users WHERE id=?', r.user_id);
-  return r;
+const recipeCardsSql = `SELECT r.id, r.title, r.image, r.views, r.prep_minutes,
+  r.cook_minutes, r.difficulty, r.diet, r.category_id, r.country,
+  c.name AS category,
+  ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) AS avg_rating,
+  (SELECT COUNT(*) FROM ratings rt WHERE rt.recipe_id=r.id) AS rating_count,
+  (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id=r.id) AS fav_count,
+  u.id AS author_id, u.username AS author_username,
+  u.display_name AS author_display_name, u.avatar AS author_avatar
+  FROM recipes r
+  LEFT JOIN categories c ON c.id=r.category_id
+  LEFT JOIN users u ON u.id=r.user_id`;
+
+function mapRecipeCards(rows) {
+  return rows.map(({ author_id, author_username, author_display_name, author_avatar, ...recipe }) => ({
+    ...recipe,
+    avg_rating: Math.round((recipe.avg_rating || 0) * 10) / 10,
+    author: author_id == null ? null : {
+      id: author_id,
+      username: author_username,
+      display_name: author_display_name,
+      avatar: author_avatar,
+    },
+  }));
 }
 
 // Danh sach + tim kiem + loc + sap xep
@@ -50,12 +64,14 @@ router.get('/', authOptional, async (req, res) => {
     };
     const order = orderMap[sort] || 'r.created_at DESC';
     const offset = (Math.max(1, +page) - 1) * 12;
-    const total = (await get(`SELECT COUNT(*) c FROM recipes r ${where}`, p)).c;
-    const rows = await query(
-      `SELECT r.* FROM recipes r ${where} ORDER BY ${order} OFFSET ? ROWS FETCH NEXT 12 ROWS ONLY`,
-      [...p, offset],
-    );
-    res.json({ total, page: +page, items: await Promise.all(rows.map(enrich)) });
+    const [count, rows] = await Promise.all([
+      get(`SELECT COUNT(*) c FROM recipes r ${where}`, p),
+      query(
+        `${recipeCardsSql} ${where} ORDER BY ${order} OFFSET ? ROWS FETCH NEXT 12 ROWS ONLY`,
+        [...p, offset],
+      ),
+    ]);
+    res.json({ total: count.c, page: +page, items: mapRecipeCards(rows) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -67,11 +83,11 @@ router.get('/suggest', authRequired, async (req, res) => {
     if (prefs.length) {
       const like = prefs.map(() => 'r.diet=? OR r.title LIKE ?').join(' OR ');
       const args = prefs.flatMap(x => [x, `%${x}%`]);
-      rows = await query(`SELECT TOP 6 r.* FROM recipes r WHERE r.is_public=1 AND r.approved=1 AND (${like}) ORDER BY r.views DESC`, args);
+      rows = await query(`${recipeCardsSql} WHERE r.is_public=1 AND r.approved=1 AND (${like}) ORDER BY r.views DESC OFFSET 0 ROWS FETCH NEXT 6 ROWS ONLY`, args);
     }
     if (!rows.length)
-      rows = await query('SELECT TOP 6 * FROM recipes WHERE is_public=1 AND approved=1 ORDER BY NEWID()');
-    res.json(await Promise.all(rows.map(enrich)));
+      rows = await query(`${recipeCardsSql} WHERE r.is_public=1 AND r.approved=1 ORDER BY NEWID() OFFSET 0 ROWS FETCH NEXT 6 ROWS ONLY`);
+    res.json(mapRecipeCards(rows));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -120,12 +136,20 @@ router.get('/admin-contact', (_req, res) => res.json(adminContact));
 router.get('/:id', authOptional, async (req, res, next) => {
   if (isNaN(+req.params.id)) return next('route');
   try {
-    const r = await get('SELECT * FROM recipes WHERE id=?', req.params.id);
+    const r = await get(`SELECT r.*, c.name AS category,
+      ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) AS avg_rating,
+      (SELECT COUNT(*) FROM ratings rt WHERE rt.recipe_id=r.id) AS rating_count,
+      (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id=r.id) AS fav_count,
+      u.id AS author_id, u.username AS author_username,
+      u.display_name AS author_display_name, u.avatar AS author_avatar
+      FROM recipes r
+      LEFT JOIN categories c ON c.id=r.category_id
+      LEFT JOIN users u ON u.id=r.user_id WHERE r.id=?`, req.params.id);
     if (!r || (!r.is_public && (!req.user || req.user.id !== r.user_id)))
       return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y cÃ´ng thá»©c' });
     await exec('UPDATE recipes SET views=views+1 WHERE id=?', [r.id]);
     r.views += 1;
-    const data = await enrich(r);
+    const data = mapRecipeCards([r])[0];
     data.ingredients = await query('SELECT * FROM recipe_ingredients WHERE recipe_id=? ORDER BY id', r.id);
     data.steps = await query('SELECT * FROM recipe_steps WHERE recipe_id=? ORDER BY step_order', r.id);
     data.is_fav = req.user ? !!(await get('SELECT 1 x FROM favorites WHERE user_id=? AND recipe_id=?', req.user.id, r.id)) : false;

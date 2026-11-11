@@ -39,19 +39,23 @@ app.use("/api/ai", require("./routes/ai"));
 // Home endpoint tong hop (SQL Server)
 app.get("/api/home", async (_req, res) => {
   try {
-    const base = "FROM recipes r WHERE r.is_public=1 AND r.approved=1";
-    const card = "SELECT TOP 6 r.id, r.title, r.image, r.views, r.prep_minutes, r.cook_minutes, r.difficulty, r.diet ";
-    const enrich = async (r) => {
-      const a = await get("SELECT AVG(CAST(stars AS FLOAT)) a FROM ratings WHERE recipe_id=?", r.id);
-      return { ...r, avg_rating: a && a.a ? Math.round(a.a * 10) / 10 : 0 };
-    };
-    const map = async (rows) => Promise.all(rows.map(enrich));
+    const card = `SELECT TOP 6 r.id, r.title, r.image, r.views, r.prep_minutes,
+      r.cook_minutes, r.difficulty, r.diet, c.name AS category,
+      ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) AS avg_rating
+      FROM recipes r LEFT JOIN categories c ON c.id=r.category_id
+      WHERE r.is_public=1 AND r.approved=1`;
+    const [featured, newest, topRated, categories] = await Promise.all([
+      query(`${card} ORDER BY r.views DESC`),
+      query(`${card} ORDER BY r.created_at DESC`),
+      query(`${card} ORDER BY (SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id) DESC`),
+      query("SELECT * FROM categories"),
+    ]);
     res.json({
-      featured: await map(await query(`${card} ${base} ORDER BY r.views DESC`)),
-      newest: await map(await query(`${card} ${base} ORDER BY r.created_at DESC`)),
-      popular: await map(await query(`${card} ${base} ORDER BY r.views DESC`)),
-      topRated: await map(await query(`${card} ${base} ORDER BY (SELECT AVG(CAST(stars AS FLOAT)) FROM ratings WHERE recipe_id=r.id) DESC`)),
-      categories: await query("SELECT * FROM categories"),
+      featured,
+      newest,
+      popular: featured,
+      topRated,
+      categories,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
