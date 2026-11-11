@@ -1,6 +1,6 @@
 // AI Recipe (SQL Server): goi y mon tu nguyen lieu co san, thuc don theo khau vi
 const express = require("express");
-const { query, get } = require("../db/database");
+const { query } = require("../db/database");
 const { authRequired } = require("../middleware");
 
 const router = express.Router();
@@ -8,15 +8,32 @@ const router = express.Router();
 // Goi y mon tu nguyen lieu co san: cham diem cong thuc theo so nguyen lieu trung khop
 router.post("/from-ingredients", authRequired, async (req, res) => {
   try {
-    const ings = (req.body.ingredients || []).map(s => s.toLowerCase().trim()).filter(Boolean);
+    const ings = (Array.isArray(req.body.ingredients) ? req.body.ingredients : [])
+      .filter(s => typeof s === "string")
+      .map(s => s.toLowerCase().trim())
+      .filter(Boolean);
     if (!ings.length) return res.json([]);
-    const recipes = await query("SELECT * FROM recipes WHERE is_public=1 AND approved=1");
+    const rows = await query(`SELECT r.*, ri.name AS ingredient_name
+      FROM recipes r
+      JOIN recipe_ingredients ri ON ri.recipe_id=r.id
+      WHERE r.is_public=1 AND r.approved=1`);
+    const byRecipe = new Map();
+    for (const row of rows) {
+      let entry = byRecipe.get(row.id);
+      if (!entry) {
+        entry = { recipe: {}, ingredients: [] };
+        for (const [key, value] of Object.entries(row)) {
+          if (key !== "ingredient_name") entry.recipe[key] = value;
+        }
+        byRecipe.set(row.id, entry);
+      }
+      if (row.ingredient_name) entry.ingredients.push(row.ingredient_name.toLowerCase());
+    }
     const scored = [];
-    for (const r of recipes) {
-      const ri = (await query("SELECT name FROM recipe_ingredients WHERE recipe_id=?", r.id)).map(x => x.name.toLowerCase());
+    for (const { recipe, ingredients: ri } of byRecipe.values()) {
       const match = ings.filter(i => ri.some(x => x.includes(i) || i.includes(x)));
       const missing = ri.filter(x => !match.some(m => x.includes(m) || m.includes(x)));
-      if (match.length) scored.push({ recipe: r, score: match.length, match, missing: missing.slice(0, 5) });
+      if (match.length) scored.push({ recipe, score: match.length, match, missing: missing.slice(0, 5) });
     }
     scored.sort((a, b) => b.score - a.score);
     res.json(scored.slice(0, 6));

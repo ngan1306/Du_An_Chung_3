@@ -514,16 +514,21 @@ router.post('/shopping', authRequired, async (req, res) => {
   res.json({ ok: true });
 });
 router.post('/shopping/from-recipe/:rid', authRequired, async (req, res) => {
-  const ings = await query('SELECT * FROM recipe_ingredients WHERE recipe_id=?', req.params.rid);
-  let added = 0;
-  for (const i of ings) {
-    const ex = await get('SELECT 1 x FROM shopping_items WHERE user_id=? AND name=?', req.user.id, i.name);
-    if (!ex) {
-      await exec('INSERT INTO shopping_items (user_id,name,quantity) VALUES (?,?,?)', req.user.id, i.name, `${i.quantity} ${i.unit}`.trim());
-      added++;
-    }
-  }
-  res.json({ added });
+  const inserted = await query(`WITH ingredients AS (
+    SELECT name, quantity, unit,
+      ROW_NUMBER() OVER (PARTITION BY name ORDER BY id) AS row_num
+    FROM recipe_ingredients WHERE recipe_id=?
+  )
+  INSERT INTO shopping_items (user_id,name,quantity)
+  OUTPUT INSERTED.id AS id
+  SELECT ?, i.name, LTRIM(RTRIM(CONCAT(i.quantity, ' ', i.unit)))
+  FROM ingredients i
+  WHERE i.row_num=1
+    AND NOT EXISTS (
+      SELECT 1 FROM shopping_items s WHERE s.user_id=? AND s.name=i.name
+    )`,
+  req.params.rid, req.user.id, req.user.id);
+  res.json({ added: inserted.length });
 });
 router.put('/shopping/:id', authRequired, async (req, res) => {
   const it = await get('SELECT * FROM shopping_items WHERE id=? AND user_id=?', req.params.id, req.user.id);

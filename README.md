@@ -83,6 +83,7 @@ Xem dữ liệu trong SSMS: kết nối `DESKTOP-UQULP3N\SQLEXPRESS` → databas
 - Tải danh sách công thức, bộ sưu tập, hồ sơ và lịch sử theo nhóm để giảm truy vấn tuần tự.
 - Khi lưu công thức, chèn nguyên liệu và các bước theo lô tối đa 500 dòng mỗi truy vấn.
 - Tải số liệu dashboard bằng một truy vấn tổng hợp, lấy danh sách quản trị với điểm đánh giá trong cùng truy vấn và gửi thông báo toàn hệ thống theo lô.
+- Gợi ý AI đọc công thức/nguyên liệu bằng một truy vấn thay vì truy vấn riêng từng món; tạo shopping list từ công thức theo một thao tác cơ sở dữ liệu.
 
 ## Ảnh món ăn
 
