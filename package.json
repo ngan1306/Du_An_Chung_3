@@ -1,0 +1,27 @@
+{
+  "name": "recipe-app",
+  "version": "1.0.0",
+  "description": "Recipe App - Ung dung quan ly va chia se cong thuc nau an",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "seed": "node server/db/seed.js",
+    "seed:drinks": "node scripts/seed-drinks.mjs",
+    "seed:snacks": "node scripts/seed-snacks.mjs",
+    "fetch:sample-recipes": "node scripts/fetch-sample-recipes.mjs",
+    "fetch:recipes:600": "node scripts/fetch-600-recipes.mjs",
+    "seed:recipes:50": "node server/db/seed-mssql.js && node add-dishes.js",
+    "seed:recipes:600": "node scripts/seed-600-recipes.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "msnodesqlv8": "^6.2.2",
+    "mssql": "^12.7.14",
+    "multer": "^1.4.5-lts.1"
+  }
+}
