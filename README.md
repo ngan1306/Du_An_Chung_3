@@ -72,7 +72,7 @@ Xem dữ liệu trong SSMS: kết nối `DESKTOP-UQULP3N\SQLEXPRESS` → databas
 - **AI Recipe**: gợi ý món từ nguyên liệu có sẵn (chấm điểm khớp nguyên liệu), thực đơn theo khẩu vị/calo/thời gian, đề xuất nguyên liệu còn thiếu.
 - **Cooking Mode**: hướng dẫn từng bước, đánh dấu hoàn thành, đồng hồ đếm ngược, phóng to chữ.
 - **Thông báo**: lượt thích, bình luận/đánh giá, người theo dõi mới, thông báo hệ thống từ admin.
-- **Quản trị**: dashboard thống kê, quản lý người dùng (khóa/mở khóa, phân quyền user/moderator/admin), duyệt/từ chối công thức, quản lý danh mục & nguyên liệu, quản lý bình luận, kiểm duyệt báo cáo, gửi thông báo toàn hệ thống, nhật ký hoạt động, thống kê lượt xem/đánh giá.
+- **Quản trị**: dashboard thống kê, thêm/sửa/xóa tài khoản, công thức, danh mục và nguyên liệu; khóa/mở khóa và phân quyền; duyệt công thức, quản lý bình luận và báo cáo, gửi thông báo toàn hệ thống, xem nhật ký hoạt động. Xóa tài khoản sẽ xóa nội dung liên quan nhưng giữ nhật ký quản trị.
 
 ## Ảnh món ăn
 

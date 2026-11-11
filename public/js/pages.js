@@ -799,7 +799,11 @@ Pages._saveRecipe = async (id) => {
     if (id) await API.put("/recipes/" + id, body);
     else await API.post("/recipes", body);
     toast("Đã lưu công thức!");
-    go("/profile");
+    if (API.user?.role === "admin" && sessionStorage.getItem("adminReturnTab")) {
+      go("/admin");
+    } else {
+      go("/profile");
+    }
   } catch (e) {
     toast(e.message);
   }
@@ -1223,13 +1227,16 @@ Pages.admin = async () => {
       )
       .join("")}</div>
     <div id="atab"></div>`;
-  Pages._atab("dashboard");
+  const initialTab = sessionStorage.getItem("adminReturnTab") || "dashboard";
+  sessionStorage.removeItem("adminReturnTab");
+  Pages._atab(initialTab);
 };
 Pages._atab = async (t) => {
   document
     .querySelectorAll(".tabs button")
     .forEach((b) => b.classList.toggle("active", b.dataset.t === t));
   const el = document.getElementById("atab");
+  const canManage = API.user?.role === "admin";
   el.innerHTML = '<div class="empty">Đang tải...</div>';
   if (t === "dashboard") {
     const s = await API.get("/admin/stats");
@@ -1253,15 +1260,17 @@ Pages._atab = async (t) => {
   }
   if (t === "users") {
     const users = await API.get("/admin/users");
-    el.innerHTML = `<table><tr><th>ID</th><th>Tên</th><th>Email</th><th>Quyền</th><th>Trạng thái</th><th>Món</th><th>Hành động</th></tr>
+    Pages._adminUsers = users;
+    el.innerHTML = `${canManage ? '<button class="btn" onclick="Pages._adminCreateUser()">＋ Thêm tài khoản</button>' : ""}
+      <table style="margin-top:12px"><tr><th>ID</th><th>Tên</th><th>Email</th><th>Quyền</th><th>Trạng thái</th><th>Món</th><th>Hành động</th></tr>
       ${users
         .map(
           (
             u,
           ) => `<tr><td>${u.id}</td><td>${esc(u.username)}</td><td>${esc(u.email)}</td>
         <td>${esc(u.role)}</td><td>${u.status === "locked" ? "🔒 Bị khóa" : "✅ Active"}</td><td>${u.recipes}</td>
-        <td><button class="btn secondary small" onclick="Pages._setRole(${u.id}, this.dataset.r)" data-r="${u.role === "admin" ? "admin" : u.role === "moderator" ? "moderator" : "user"}">${u.role === "admin" ? "👑" : u.role === "moderator" ? "🛡" : "👤"}</button>
-        <button class="btn ${u.status === "locked" ? "" : "danger"} small" onclick="Pages._lockUser(${u.id},'${u.status === "locked" ? "active" : "locked"}')">${u.status === "locked" ? "Mở khóa" : "Khóa"}</button></td></tr>`,
+        <td>${canManage ? `<button class="btn secondary small" onclick="Pages._adminEditUser(${u.id})">✏️ Sửa</button>
+        <button class="btn danger small" onclick="Pages._adminDeleteUser(${u.id})">Xóa</button>` : ""}</td></tr>`,
         )
         .join("")}</table>`;
   }
@@ -1283,6 +1292,7 @@ Pages._atab = async (t) => {
           .join("") || '<p class="muted">Không có công thức chờ duyệt</p>'
       }
       <h3 style="margin-top:16px">🍲 Tất cả công thức</h3>
+      ${canManage ? '<button class="btn" onclick="Pages._adminNewRecipe()">＋ Thêm công thức</button>' : ""}
       <table><tr><th>ID</th><th>Tiêu đề</th><th>Tác giả</th><th>⭐</th><th>👁</th><th>Duyệt</th><th></th></tr>
       ${all
         .map(
@@ -1290,7 +1300,8 @@ Pages._atab = async (t) => {
             r,
           ) => `<tr><td>${r.id}</td><td><a href="#/recipe/${r.id}">${esc(r.title)}</a></td><td>${esc(r.username)}</td>
         <td>${r.avg_rating}</td><td>${r.views}</td><td>${r.approved ? "✅" : "⏳"}</td>
-        <td><button class="btn danger small" onclick="Pages._delRecipeAd(${r.id})">Xóa</button></td></tr>`,
+        <td>${canManage ? `<button class="btn secondary small" onclick="Pages._adminEditRecipe(${r.id})">Sửa</button>
+        <button class="btn danger small" onclick="Pages._delRecipeAd(${r.id})">Xóa</button>` : ""}</td></tr>`,
         )
         .join("")}</table>`;
   }
@@ -1299,22 +1310,23 @@ Pages._atab = async (t) => {
       API.get("/admin/categories"),
       API.get("/admin/ingredients"),
     ]);
+    Pages._adminCategories = cats;
+    Pages._adminIngredients = ings;
     el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <div class="panel"><h3>🗂 Danh mục</h3>
         ${cats
           .map(
             (
               c,
-            ) => `<div class="comment">${c.icon} <b>${esc(c.name)}</b> (${c.count})
-          <button class="btn danger small" style="float:right" onclick="Pages._delCat(${c.id})">✕</button></div>`,
+            ) => `<div class="comment">${esc(c.icon)} <b>${esc(c.name)}</b> (${c.count})
+            ${canManage ? `<button class="btn secondary small" style="float:right;margin-right:6px" onclick="Pages._adminEditCategory(${c.id})">Sửa</button>
+            <button class="btn danger small" style="float:right" onclick="Pages._delCat(${c.id})">✕</button>` : ""}</div>`,
           )
           .join("")}
-        <div style="display:flex;gap:8px;margin-top:10px"><input id="ncName" placeholder="Tên danh mục"><input id="ncIcon" placeholder="Icon" style="width:70px">
-        <button class="btn small" onclick="Pages._addCat()">Thêm</button></div></div>
+        ${canManage ? '<div style="display:flex;gap:8px;margin-top:10px"><input id="ncName" placeholder="Tên danh mục"><input id="ncIcon" placeholder="Icon" style="width:70px"><button class="btn small" onclick="Pages._addCat()">Thêm</button></div>' : ""}</div>
       <div class="panel"><h3>🥕 Nguyên liệu</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">${ings.map((i) => `<span class="badge">${esc(i.name)} <a onclick="Pages._delIng(${i.id})">✕</a></span>`).join("")}</div>
-        <div style="display:flex;gap:8px;margin-top:10px"><input id="niName" placeholder="Nguyên liệu mới">
-        <button class="btn small" onclick="Pages._addIng2()">Thêm</button></div></div></div>`;
+        <div style="display:flex;flex-wrap:wrap;gap:6px">${ings.map((i) => `<span class="badge">${esc(i.name)} ${canManage ? `<a onclick="Pages._adminEditIngredient(${i.id})" title="Sửa">✏️</a> <a onclick="Pages._delIng(${i.id})" title="Xóa">✕</a>` : ""}</span>`).join("")}</div>
+        ${canManage ? '<div style="display:flex;gap:8px;margin-top:10px"><input id="niName" placeholder="Nguyên liệu mới"><button class="btn small" onclick="Pages._addIng2()">Thêm</button></div>' : ""}</div></div>`;
   }
   if (t === "comments") {
     const cs = await API.get("/admin/comments");
@@ -1325,7 +1337,7 @@ Pages._atab = async (t) => {
             c,
           ) => `<tr><td>${esc(c.username)}</td><td><a href="#/recipe/${c.recipe_id}">${esc(c.title)}</a></td>
         <td>${"★".repeat(c.stars)}</td><td>${esc(c.comment || "(chỉ chấm sao)")}</td>
-        <td><button class="btn danger small" onclick="Pages._delCm('${c.rid}')">Xóa</button></td></tr>`,
+        <td>${canManage ? `<button class="btn danger small" onclick="Pages._delCm('${c.rid}')">Xóa</button>` : ""}</td></tr>`,
         )
         .join("")}</table>`;
   }
@@ -1354,6 +1366,125 @@ Pages._broadcast = async () => {
   });
   toast(`Đã gửi tới ${r.sent} người dùng`);
 };
+Pages._adminCreateUser = () => {
+  openModal(
+    "Thêm tài khoản",
+    `<label>Tên đăng nhập</label><input id="adminUserName" maxlength="100" style="width:100%">
+    <label>Email</label><input id="adminUserEmail" type="email" maxlength="150" style="width:100%">
+    <label>Tên hiển thị</label><input id="adminUserDisplayName" maxlength="150" style="width:100%">
+    <label>Mật khẩu tạm thời (ít nhất 8 ký tự)</label><input id="adminUserPassword" type="password" minlength="8" style="width:100%">
+    <label>Quyền</label><select id="adminUserRole" style="width:100%"><option value="user">Người dùng</option><option value="moderator">Điều hành viên</option><option value="admin">Quản trị viên</option></select>
+    <button class="btn" style="margin-top:12px" onclick="Pages._adminSaveNewUser()">Tạo tài khoản</button>`,
+  );
+};
+Pages._adminSaveNewUser = async () => {
+  const value = (id) => document.getElementById(id)?.value.trim() || "";
+  try {
+    await API.post("/admin/users", {
+      username: value("adminUserName"),
+      email: value("adminUserEmail"),
+      display_name: value("adminUserDisplayName"),
+      password: document.getElementById("adminUserPassword")?.value || "",
+      role: value("adminUserRole"),
+    });
+    document.getElementById("modal-ov")?.remove();
+    toast("Đã tạo tài khoản");
+    await Pages._atab("users");
+  } catch (e) {
+    toast(e.message);
+  }
+};
+Pages._adminEditUser = (id) => {
+  const user = (Pages._adminUsers || []).find((item) => item.id === id);
+  if (!user) return toast("Không tìm thấy tài khoản");
+  openModal(
+    "Chỉnh sửa tài khoản",
+    `<label>Tên đăng nhập</label><input id="adminUserName" maxlength="100" value="${esc(user.username)}" style="width:100%">
+    <label>Email</label><input id="adminUserEmail" type="email" maxlength="150" value="${esc(user.email)}" style="width:100%">
+    <label>Tên hiển thị</label><input id="adminUserDisplayName" maxlength="150" value="${esc(user.display_name || "")}" style="width:100%">
+    <label>Quyền</label><select id="adminUserRole" style="width:100%">
+      <option value="user" ${user.role === "user" ? "selected" : ""}>Người dùng</option>
+      <option value="moderator" ${user.role === "moderator" ? "selected" : ""}>Điều hành viên</option>
+      <option value="admin" ${user.role === "admin" ? "selected" : ""}>Quản trị viên</option>
+    </select>
+    <label>Trạng thái</label><select id="adminUserStatus" style="width:100%">
+      <option value="active" ${user.status === "active" ? "selected" : ""}>Đang hoạt động</option>
+      <option value="locked" ${user.status === "locked" ? "selected" : ""}>Đã khóa</option>
+    </select>
+    <button class="btn" style="margin-top:12px" onclick="Pages._adminSaveUser(${user.id})">Lưu thay đổi</button>`,
+  );
+};
+Pages._adminSaveUser = async (id) => {
+  const value = (field) => document.getElementById(field)?.value.trim() || "";
+  try {
+    await API.put(`/admin/users/${id}`, {
+      username: value("adminUserName"),
+      email: value("adminUserEmail"),
+      display_name: value("adminUserDisplayName"),
+      role: value("adminUserRole"),
+      status: value("adminUserStatus"),
+    });
+    document.getElementById("modal-ov")?.remove();
+    toast("Đã cập nhật tài khoản");
+    await Pages._atab("users");
+  } catch (e) {
+    toast(e.message);
+  }
+};
+Pages._adminDeleteUser = async (id) => {
+  if (!confirm("Xóa vĩnh viễn tài khoản và nội dung do tài khoản này tạo? Nhật ký quản trị sẽ được giữ lại.")) return;
+  try {
+    await API.del(`/admin/users/${id}`);
+    toast("Đã xóa tài khoản và nội dung liên quan");
+    await Pages._atab("users");
+  } catch (e) {
+    toast(e.message);
+  }
+};
+Pages._adminNewRecipe = () => {
+  sessionStorage.setItem("adminReturnTab", "recipes");
+  go("/new-recipe");
+};
+Pages._adminEditRecipe = (id) => {
+  sessionStorage.setItem("adminReturnTab", "recipes");
+  go(`/edit-recipe/${id}`);
+};
+Pages._adminEditCategory = (id) => {
+  const category = (Pages._adminCategories || []).find((item) => item.id === id);
+  if (!category) return toast("Không tìm thấy danh mục");
+  openModal(
+    "Chỉnh sửa danh mục",
+    `<label>Tên danh mục</label><input id="adminCategoryName" maxlength="100" value="${esc(category.name)}" style="width:100%">
+    <label>Biểu tượng</label><input id="adminCategoryIcon" maxlength="10" value="${esc(category.icon || "")}" style="width:100%">
+    <button class="btn" style="margin-top:12px" onclick="Pages._adminSaveCategory(${category.id})">Lưu thay đổi</button>`,
+  );
+};
+Pages._adminSaveCategory = async (id) => {
+  try {
+    await API.put(`/admin/categories/${id}`, {
+      name: document.getElementById("adminCategoryName").value,
+      icon: document.getElementById("adminCategoryIcon").value,
+    });
+    document.getElementById("modal-ov")?.remove();
+    toast("Đã cập nhật danh mục");
+    await Pages._atab("catalog");
+  } catch (e) {
+    toast(e.message);
+  }
+};
+Pages._adminEditIngredient = async (id) => {
+  const ingredient = (Pages._adminIngredients || []).find((item) => item.id === id);
+  if (!ingredient) return toast("Không tìm thấy nguyên liệu");
+  const name = prompt("Tên nguyên liệu:", ingredient.name);
+  if (name === null) return;
+  try {
+    await API.put(`/admin/ingredients/${ingredient.id}`, { name });
+    toast("Đã cập nhật nguyên liệu");
+    await Pages._atab("catalog");
+  } catch (e) {
+    toast(e.message);
+  }
+};
 Pages._setRole = async (id, btn) => {
   const cur = btn.dataset.r;
   const next = { user: "moderator", moderator: "admin", admin: "user" }[cur];
@@ -1375,30 +1506,56 @@ Pages._approve = async (id, ok) => {
 };
 Pages._delRecipeAd = async (id) => {
   if (confirm("Xóa công thức?")) {
-    await API.del("/admin/recipes/" + id);
-    Pages._atab("recipes");
+    try {
+      await API.del("/admin/recipes/" + id);
+      toast("Đã xóa công thức");
+      Pages._atab("recipes");
+    } catch (e) {
+      toast(e.message);
+    }
   }
 };
 Pages._addCat = async () => {
-  await API.post("/admin/categories", {
-    name: document.getElementById("ncName").value,
-    icon: document.getElementById("ncIcon").value,
-  });
-  Pages._atab("catalog");
+  try {
+    await API.post("/admin/categories", {
+      name: document.getElementById("ncName").value,
+      icon: document.getElementById("ncIcon").value,
+    });
+    toast("Đã thêm danh mục");
+    Pages._atab("catalog");
+  } catch (e) {
+    toast(e.message);
+  }
 };
 Pages._delCat = async (id) => {
-  await API.del("/admin/categories/" + id);
-  Pages._atab("catalog");
+  try {
+    await API.del("/admin/categories/" + id);
+    toast("Đã xóa danh mục");
+    Pages._atab("catalog");
+  } catch (e) {
+    toast(e.message);
+  }
 };
 Pages._addIng2 = async () => {
-  await API.post("/admin/ingredients", {
-    name: document.getElementById("niName").value,
-  });
-  Pages._atab("catalog");
+  try {
+    await API.post("/admin/ingredients", {
+      name: document.getElementById("niName").value,
+    });
+    toast("Đã thêm nguyên liệu");
+    Pages._atab("catalog");
+  } catch (e) {
+    toast(e.message);
+  }
 };
 Pages._delIng = async (id) => {
-  await API.del("/admin/ingredients/" + id);
-  Pages._atab("catalog");
+  if (!confirm("Xóa nguyên liệu này khỏi danh mục nguyên liệu?")) return;
+  try {
+    await API.del("/admin/ingredients/" + id);
+    toast("Đã xóa nguyên liệu");
+    Pages._atab("catalog");
+  } catch (e) {
+    toast(e.message);
+  }
 };
 Pages._delCm = async (rid) => {
   await API.del("/admin/comments/" + rid);
