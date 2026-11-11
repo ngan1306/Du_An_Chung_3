@@ -43,39 +43,6 @@ node add-dishes.js
 npm start   # -> http://localhost:3000
 ```
 
-Để bổ sung công thức cho đến khi danh mục **Đồ uống** có đủ 20 món, chạy:
-
-```powershell
-npm run seed:drinks
-```
-
-Lệnh này không xóa dữ liệu hiện có và có thể chạy lại an toàn; món ăn vặt bị xếp nhầm vào danh mục đồ uống sẽ được chuyển sang **Món ăn vặt**.
-
-Để bổ sung công thức cho đến khi danh mục **Món ăn vặt** có đủ 20 món, chạy:
-
-```powershell
-npm run seed:snacks
-```
-
-Lệnh này không xóa dữ liệu hiện có và có thể chạy lại an toàn. Ảnh món ăn vặt được lưu cục bộ trong `public/img/`; nguồn và giấy phép được ghi trong `IMAGE_CREDITS.md`.
-
-Thêm **600 món mới** (không tính những món đã có) và ảnh chụp thật:
-
-```powershell
-npm run fetch:recipes:600
-npm run seed:recipes:600
-```
-
-Lệnh đầu lấy 600 công thức khác nhau cùng ảnh JPG và lưu cục bộ trong `public/img/`. Lệnh sau thêm chúng vào SQL Server, không xóa dữ liệu hiện có và dừng nếu phát hiện tên món trùng. Có thể chạy lại lệnh tải ảnh để tiếp tục nếu việc tải bị gián đoạn.
-
-Nếu muốn tải lại ảnh chụp và dữ liệu nguồn cho 30 công thức bổ sung:
-
-```powershell
-npm run fetch:sample-recipes
-```
-
-Sau đó chạy `node add-dishes.js` để nạp công thức vào SQL Server. Trình nạp bỏ qua món đã có và chỉ bổ sung tối đa đến 50 công thức; không xóa công thức hay dữ liệu người dùng hiện có.
-
 ## Tài khoản demo
 
 | Tài khoản | Mật khẩu | Quyền |
