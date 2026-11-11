@@ -82,6 +82,7 @@ Xem dữ liệu trong SSMS: kết nối `DESKTOP-UQULP3N\SQLEXPRESS` → databas
 - Tải nguyên liệu, các bước, lượt đánh giá và trạng thái yêu thích của trang chi tiết đồng thời.
 - Tải danh sách công thức, bộ sưu tập, hồ sơ và lịch sử theo nhóm để giảm truy vấn tuần tự.
 - Khi lưu công thức, chèn nguyên liệu và các bước theo lô tối đa 500 dòng mỗi truy vấn.
+- Tải số liệu dashboard bằng một truy vấn tổng hợp, lấy danh sách quản trị với điểm đánh giá trong cùng truy vấn và gửi thông báo toàn hệ thống theo lô.
 
 ## Ảnh món ăn
 

@@ -89,18 +89,19 @@ async function deleteUserData(userId) {
 }
 
 router.get("/stats", wrap(async (_req, res) => {
-  const c = async (sql, p) => (await get(sql, p)).c;
-  res.json({
-    users: await c("SELECT COUNT(*) c FROM users"),
-    recipes: await c("SELECT COUNT(*) c FROM recipes"),
-    pending: await c("SELECT COUNT(*) c FROM recipes WHERE approved=0"),
-    comments: await c("SELECT COUNT(*) c FROM ratings"),
-    views: await c("SELECT ISNULL(SUM(views),0) c FROM recipes"),
-    reports: await c("SELECT COUNT(*) c FROM reports WHERE status='open'"),
-    posts: await c("SELECT COUNT(*) c FROM posts"),
-    topRecipes: await query("SELECT TOP 5 title,views FROM recipes ORDER BY views DESC"),
-    newUsers: await query("SELECT TOP 5 username, created_at FROM users ORDER BY created_at DESC"),
-  });
+  const [counts, topRecipes, newUsers] = await Promise.all([
+    get(`SELECT
+      (SELECT COUNT(*) FROM users) users,
+      (SELECT COUNT(*) FROM recipes) recipes,
+      (SELECT COUNT(*) FROM recipes WHERE approved=0) pending,
+      (SELECT COUNT(*) FROM ratings) comments,
+      (SELECT ISNULL(SUM(views),0) FROM recipes) views,
+      (SELECT COUNT(*) FROM reports WHERE status='open') reports,
+      (SELECT COUNT(*) FROM posts) posts`),
+    query("SELECT TOP 5 title,views FROM recipes ORDER BY views DESC"),
+    query("SELECT TOP 5 username, created_at FROM users ORDER BY created_at DESC"),
+  ]);
+  res.json({ ...counts, topRecipes, newUsers });
 }));
 
 router.get("/users", wrap(async (_req, res) => {
@@ -175,13 +176,11 @@ router.delete("/users/:id", adminRoleOnly, wrap(async (req, res) => {
 
 router.get("/recipes", wrap(async (req, res) => {
   const w = req.query.pending === "1" ? " WHERE r.approved=0" : "";
-  const rows = await query(
-    `SELECT TOP 100 r.*, u.username FROM recipes r JOIN users u ON u.id=r.user_id${w} ORDER BY r.created_at DESC`);
-  for (const r of rows) {
-    const a = await get("SELECT AVG(CAST(stars AS FLOAT)) a FROM ratings WHERE recipe_id=?", r.id);
-    r.avg_rating = a && a.a ? Math.round(a.a * 10) / 10 : 0;
-  }
-  res.json(rows);
+  res.json(await query(
+    `SELECT TOP 100 r.id, r.title, r.views, r.approved, r.created_at, u.username,
+      ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) avg_rating
+     FROM recipes r JOIN users u ON u.id=r.user_id${w} ORDER BY r.created_at DESC`,
+  ));
 }));
 
 router.put("/recipes/:id/approve", wrap(async (req, res) => {
@@ -287,10 +286,16 @@ router.put("/reports/:id", wrap(async (req, res) => {
 // Gui thong bao he thong cho moi nguoi
 router.post("/broadcast", wrap(async (req, res) => {
   const users = await query("SELECT id FROM users WHERE status='active'");
-  for (const u of users)
-    await exec("INSERT INTO notifications (user_id,type,message) VALUES (?,?,?)",
-      [u.id, "system", req.body.message || "Thông báo từ hệ thống"]);
-  log(req.user.id, "broadcast", req.body.message);
+  const message = req.body.message || "Thông báo từ hệ thống";
+  for (let start = 0; start < users.length; start += 600) {
+    const batch = users.slice(start, start + 600);
+    const values = batch.map(() => "(?,?,?)").join(",");
+    await exec(
+      `INSERT INTO notifications (user_id,type,message) VALUES ${values}`,
+      batch.flatMap((user) => [user.id, "system", message]),
+    );
+  }
+  log(req.user.id, "broadcast", message);
   res.json({ sent: users.length });
 }));
 
