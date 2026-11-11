@@ -14,6 +14,7 @@ const routes = {
   "/planner": () => Pages.planner(),
   "/shopping": () => Pages.shopping(),
   "/ai": () => Pages.ai(),
+  "/contact": () => Pages.contact(),
   "/share": (q, m) => Pages.share(m),
   "/admin": () => Pages.admin(),
 };

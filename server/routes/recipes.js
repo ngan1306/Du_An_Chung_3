@@ -4,6 +4,11 @@ const { query, exec, get } = require('../db/database');
 const { authRequired, authOptional, log, notify } = require('../middleware');
 
 const router = express.Router();
+const adminContact = Object.freeze({
+  name: 'Vũ Thanh Ngân',
+  phone: '0702994316',
+  email: 'baon130625@gmail.com',
+});
 
 // wrapper dam bao bat moi loi async -> 500 thay vi treo request
 const aw = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -108,6 +113,8 @@ router.get('/collections/:id/recipes', authRequired, async (req, res) => {
     res.json(recipes);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+router.get('/admin-contact', (_req, res) => res.json(adminContact));
 
 // Chi tiet cong thuc
 router.get('/:id', authOptional, async (req, res, next) => {
@@ -359,8 +366,15 @@ router.post('/users/:id/follow', authRequired, async (req, res) => {
 });
 
 router.get('/users/:id', async (req, res) => {
-  const u = await get('SELECT id,username,display_name,avatar,bio,created_at FROM users WHERE id=?', req.params.id);
+  const u = await get('SELECT id,username,display_name,avatar,bio,created_at,role FROM users WHERE id=?', req.params.id);
   if (!u) return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y' });
+  if (u.role === 'admin' && u.username === adminContact.name) {
+    return res.json({
+      id: u.id,
+      display_name: adminContact.name,
+      contact: { phone: adminContact.phone, email: adminContact.email },
+    });
+  }
   u.recipes = await Promise.all(
     (await query('SELECT * FROM recipes WHERE user_id=? AND is_public=1 AND approved=1', u.id)).map(enrich));
   u.followers = (await get('SELECT COUNT(*) c FROM follows WHERE following_id=?', u.id)).c;

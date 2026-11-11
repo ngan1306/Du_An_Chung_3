@@ -868,6 +868,16 @@ Pages._likePost = async (id, btn) => {
 /* ---------- Trang cá nhân người khác ---------- */
 Pages.user = async (m) => {
   const u = await API.get("/recipes/users/" + m[1]);
+  if (u.contact) {
+    app().innerHTML = `
+      <div class="panel">
+        <h2>Liên hệ quản trị viên</h2>
+        <p>${esc(u.display_name)}</p>
+        <p>☎️ Hotline: <a href="tel:${esc(u.contact.phone)}">${esc(u.contact.phone)}</a></p>
+        <p>✉️ Gmail: <a href="mailto:${esc(u.contact.email)}">${esc(u.contact.email)}</a></p>
+      </div>`;
+    return;
+  }
   const [f1, f2] = await Promise.all([
     API.get(`/auth/${u.id}/followers`),
     API.get(`/auth/${u.id}/following`),
@@ -897,6 +907,16 @@ Pages.user = async (m) => {
     <div class="grid">${u.recipes.map(recipeCard).join("") || '<div class="empty">Chưa có công thức công khai</div>'}</div>
     <h2 class="section">📰 Bài viết</h2>
     ${u.posts.map((p) => `<div class="feed-post"><p>${esc(p.content)}</p><span class="muted">${esc(p.created_at)}</span></div>`).join("") || '<p class="muted">Chưa có bài viết</p>'}`;
+};
+Pages.contact = async () => {
+  const contact = await API.get("/recipes/admin-contact");
+  app().innerHTML = `
+    <div class="panel">
+      <h2>Liên hệ quản trị viên</h2>
+      <p>${esc(contact.name)}</p>
+      <p>☎️ Hotline: <a href="tel:${esc(contact.phone)}">${esc(contact.phone)}</a></p>
+      <p>✉️ Gmail: <a href="mailto:${esc(contact.email)}">${esc(contact.email)}</a></p>
+    </div>`;
 };
 Pages._toggleFollow = async (id, btn) => {
   const { following } = await API.post(`/recipes/users/${id}/follow`);
@@ -1194,7 +1214,7 @@ Pages._register = async () => {
 
 /* ---------- Trang Administration ---------- */
 Pages.admin = async () => {
-  if (!API.user || !["admin", "moderator"].includes(API.user.role)) {
+  if (!API.user || API.user.role !== "admin") {
     app().innerHTML =
       '<div class="empty">⛔ Bạn không có quyền truy cập trang này</div>';
     return;

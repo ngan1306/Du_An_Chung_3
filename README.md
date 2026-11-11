@@ -72,6 +72,7 @@ Xem dữ liệu trong SSMS: kết nối `DESKTOP-UQULP3N\SQLEXPRESS` → databas
 - **AI Recipe**: gợi ý món từ nguyên liệu có sẵn (chấm điểm khớp nguyên liệu), thực đơn theo khẩu vị/calo/thời gian, đề xuất nguyên liệu còn thiếu.
 - **Cooking Mode**: hướng dẫn từng bước, đánh dấu hoàn thành, đồng hồ đếm ngược, phóng to chữ.
 - **Thông báo**: lượt thích, bình luận/đánh giá, người theo dõi mới, thông báo hệ thống từ admin.
+- **Liên hệ quản trị viên**: công khai hotline và Gmail; hồ sơ Vũ Thanh Ngân chỉ hiển thị thông tin liên hệ. Mục Quản trị chỉ dành cho tài khoản admin.
 - **Quản trị**: dashboard thống kê, thêm/sửa/xóa tài khoản, công thức, danh mục và nguyên liệu; khóa/mở khóa và phân quyền; duyệt công thức, quản lý bình luận và báo cáo, gửi thông báo toàn hệ thống, xem nhật ký hoạt động. Xóa tài khoản sẽ xóa nội dung liên quan nhưng giữ nhật ký quản trị.
 
 ## Ảnh món ăn

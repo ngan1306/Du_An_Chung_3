@@ -2,10 +2,9 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const { query, exec, get } = require("../db/database");
-const { authRequired, adminOnly, log } = require("../middleware");
+const { authRequired, log } = require("../middleware");
 
 const router = express.Router();
-router.use(authRequired, adminOnly);
 
 const wrap = (fn) => (req, res) =>
   fn(req, res).catch((e) => res.status(e.statusCode || 500).json({ error: e.message }));
@@ -14,6 +13,7 @@ const adminRoleOnly = (req, res, next) => {
     return res.status(403).json({ error: "Chỉ quản trị viên mới được thực hiện thao tác này" });
   next();
 };
+router.use(authRequired, adminRoleOnly);
 const fail = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 const text = (value) => (typeof value === "string" ? value.trim() : "");
 

@@ -31,13 +31,14 @@ function renderNavbar() {
     ["/planner", "Meal Planner"],
     ["/shopping", "Shopping List"],
     ["/ai", "AI Gợi ý"],
+    ["/contact", "Liên hệ"],
     ...(API.user
       ? [
           ["/favorites", "Yêu thích"],
           ["/profile", "Hồ sơ"],
         ]
       : []),
-    ...(API.user && ["admin", "moderator"].includes(API.user.role)
+    ...(API.user?.role === "admin"
       ? [["/admin", "Quản trị"]]
       : []),
   ];
