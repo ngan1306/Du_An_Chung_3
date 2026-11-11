@@ -43,14 +43,6 @@ node add-dishes.js
 npm start   # -> http://localhost:3000
 ```
 
-## Tài khoản demo
-
-| Tài khoản | Mật khẩu | Quyền |
-|---|---|---|
-| `admin` | `admin123` | Admin |
-| `anh` (anh@recipe.app) | `123456` | User |
-| `binh` | `123456` | User |
-
 ## Cơ sở dữ liệu (SQL Server: RecipeAppDB)
 
 20 bảng: `users, password_resets, categories, ingredients, recipes, recipe_ingredients, recipe_steps, favorites, collections, collection_items, ratings, comment_likes, reports, follows, posts, post_likes, meal_plans, shopping_items, notifications, activity_logs`.
