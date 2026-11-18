@@ -2,6 +2,7 @@
 const express = require("express");
 const { query } = require("../db/database");
 const { authRequired } = require("../middleware");
+const { schemaReady: marketplaceSchemaReady } = require("./marketplace");
 
 const router = express.Router();
 
@@ -13,10 +14,14 @@ router.post("/from-ingredients", authRequired, async (req, res) => {
       .map(s => s.toLowerCase().trim())
       .filter(Boolean);
     if (!ings.length) return res.json([]);
+    await marketplaceSchemaReady;
     const rows = await query(`SELECT r.*, ri.name AS ingredient_name
       FROM recipes r
       JOIN recipe_ingredients ri ON ri.recipe_id=r.id
-      WHERE r.is_public=1 AND r.approved=1`);
+      WHERE r.is_public=1 AND r.approved=1
+        AND (r.is_premium=0 OR r.user_id=? OR ?='admin'
+          OR EXISTS (SELECT 1 FROM purchased_recipes p WHERE p.user_id=? AND p.recipe_id=r.id))`,
+    req.user.id, req.user.role, req.user.id);
     const byRecipe = new Map();
     for (const row of rows) {
       let entry = byRecipe.get(row.id);

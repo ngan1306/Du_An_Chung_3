@@ -102,6 +102,10 @@ label {
 .btn:hover {
   background: var(--primary-dark);
 }
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 .btn.secondary {
   background: #eee7df;
   color: var(--text);
@@ -312,6 +316,47 @@ h2.section {
   box-shadow: var(--shadow);
   padding: 20px;
   margin: 18px 0;
+}
+.checkout-choice {
+  margin-top: 12px;
+}
+.checkout-choice h4 {
+  margin-bottom: 8px;
+}
+.checkout-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+.checkout-option {
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 2px solid #e2d8ce;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+}
+.checkout-option b,
+.checkout-option span {
+  display: block;
+}
+.checkout-option span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.checkout-option:hover,
+.checkout-option.selected {
+  border-color: var(--primary);
+  background: #fff1e6;
+}
+.checkout-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.checkout-submit {
+  min-height: 44px;
 }
 
 /* Comments */

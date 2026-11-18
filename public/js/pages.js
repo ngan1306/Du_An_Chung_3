@@ -114,6 +114,7 @@ Pages.searchResults = async (query) => {
       `<button class="btn ${number === page ? "" : "secondary"} small" ${number === page ? 'aria-current="page" disabled' : `onclick="Pages._goToPage(${number})"`}>${number}</button>`,
     );
   };
+
   if (startPage > 1) {
     addPageButton(1);
     if (startPage > 2) pageButtons.push('<span aria-hidden="true">…</span>');
@@ -141,6 +142,427 @@ Pages._goToPage = (page) => {
   location.hash = `${route}?${query}`;
 };
 
+Pages.marketplace = async (q = {}) => {
+  const result = await API.get(`/marketplace/catalog?page=${encodeURIComponent(q.page || 1)}`);
+  const page = Number(result.page) || 1;
+  const totalPages = Number(result.totalPages) || 1;
+  const items = (result.items || []).map((item) => ({
+    ...item,
+    author: item.author_id == null ? null : {
+      id: item.author_id,
+      username: item.author_username,
+      display_name: item.author_display_name,
+      avatar: item.author_avatar,
+    },
+    avg_rating: 0,
+    rating_count: 0,
+  }));
+  app().innerHTML = `
+    <h2 class="section">⭐ Công thức cộng đồng</h2>
+    <p class="muted" style="margin:-6px 0 18px">Có ${Number(result.total || 0)} công thức công khai. Công thức miễn phí luôn xem được, không cần thanh toán. Công thức Premium cần mua để mở khóa đầy đủ.</p>
+    ${items.length
+      ? `<div class="grid">${items.map((item) => `<div>
+        ${recipeCard(item)}
+        <div class="badge" style="margin:8px 4px">${item.is_premium ? "⭐ Premium · Thanh toán để mở khóa" : "✓ Miễn phí · Không cần thanh toán"}</div>
+      </div>`).join("")}</div>
+      <nav aria-label="Phân trang Marketplace" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:18px">
+        <button class="btn secondary small" ${page <= 1 ? "disabled" : `onclick="Pages._goToPage(${page - 1})"`}>← Trước</button>
+        <span>Trang ${page}/${totalPages}</span>
+        <button class="btn secondary small" ${page >= totalPages ? "disabled" : `onclick="Pages._goToPage(${page + 1})"`}>Sau →</button>
+      </nav>`
+      : '<div class="empty">Chưa có công thức công khai.</div>'}`;
+};
+
+Pages.ingredientsStore = async (q = {}) => {
+  const [suppliers, products] = await Promise.all([
+    API.get("/commerce/suppliers"),
+    API.get("/commerce/products" + (q.supplierId ? `?supplierId=${encodeURIComponent(q.supplierId)}` : "")),
+  ]);
+  app().innerHTML = `
+    <h2 class="section">🛍️ Cửa hàng nguyên liệu</h2>
+    <p class="muted">Catalog, tồn kho và thanh toán mô phỏng trong môi trường phát triển; không phát sinh giao dịch tiền thật.</p>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0">
+      <label for="storeSupplier">Nhà cung cấp</label>
+      <select id="storeSupplier" onchange="Pages._filterSupplier(this.value)">
+        <option value="">Tất cả (${suppliers.length})</option>
+        ${suppliers.map((supplier) => `<option value="${supplier.id}" ${String(q.supplierId) === String(supplier.id) ? "selected" : ""}>${esc(supplier.name)} · ${supplier.product_count} sản phẩm</option>`).join("")}
+      </select>
+      <button class="btn" onclick="go('/ingredient-cart')">🛒 Giỏ hàng & thanh toán</button>
+    </div>
+    ${products.length ? `<div class="grid">${products.map((product) => `<div class="card">
+      <div class="body">
+        <div class="badge">${esc(product.supplier_name)}</div>
+        <h3>${esc(product.name)}</h3>
+        <p class="muted">${esc(product.sku)} · ${esc(product.unit)}</p>
+        <b>${Number(product.price).toLocaleString("vi-VN")} ₫</b>
+        <p class="muted">Còn ${product.available_stock}</p>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="storeQty-${product.id}" type="number" min="1" max="${Math.min(99, product.available_stock)}" value="1" style="width:80px" ${product.available_stock <= 0 ? "disabled" : ""}>
+          <button class="btn small" onclick="Pages._addProductToCart(${product.id})" ${product.available_stock <= 0 ? "disabled" : ""}>Thêm vào giỏ</button>
+        </div>
+      </div>
+    </div>`).join("")}</div>` : '<div class="empty">Không có sản phẩm phù hợp.</div>'}`;
+};
+Pages._filterSupplier = (supplierId) => go(`/ingredients${supplierId ? `?supplierId=${encodeURIComponent(supplierId)}` : ""}`);
+Pages._addProductToCart = async (productId) => {
+  if (!API.user) return go("/login");
+  try {
+    await API.post("/commerce/cart", {
+      productId,
+      quantity: Number(document.getElementById(`storeQty-${productId}`).value),
+    });
+    toast("Đã thêm vào giỏ nguyên liệu");
+  } catch (e) { toast(e.message); }
+};
+
+Pages.ingredientCart = async () => {
+  if (!API.user) return Pages.login();
+  const [items, providers] = await Promise.all([
+    API.get("/commerce/cart"),
+    API.get("/commerce/providers"),
+  ]);
+  const subtotal = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
+  app().innerHTML = `
+    <h2 class="section">🛒 Giỏ hàng nguyên liệu</h2>
+    <p class="muted">Thanh toán và vận chuyển là mô phỏng cho kiểm thử; không thu tiền và không tạo vận đơn thật.</p>
+    ${items.length ? `<div class="panel">${items.map((item) => `<div class="comment" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px"><b>${esc(item.name)}</b><div class="muted">${esc(item.supplier_name)} · ${esc(item.unit)} · ${Number(item.price).toLocaleString("vi-VN")} ₫</div></div>
+      <input id="cartQty-${item.product_id}" type="number" min="1" max="${item.available_stock}" value="${item.quantity}" style="width:84px">
+      <b>${(Number(item.price) * Number(item.quantity)).toLocaleString("vi-VN")} ₫</b>
+      <button class="btn secondary small" onclick="Pages._updateProductQuantity(${item.product_id})">Cập nhật</button>
+      <button class="btn danger small" onclick="Pages._removeProduct(${item.product_id})">Xóa</button>
+    </div>`).join("")}</div>
+    <div class="panel" style="margin-top:16px">
+      <h3>Thanh toán mô phỏng</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0 16px">
+        <div><label for="commerceRecipient">Người nhận</label><input id="commerceRecipient" maxlength="150" autocomplete="name" required style="width:100%"></div>
+        <div><label for="commercePhone">Số điện thoại</label><input id="commercePhone" type="tel" maxlength="30" autocomplete="tel" required style="width:100%"></div>
+        <div><label for="commerceAddress">Địa chỉ giao hàng</label><input id="commerceAddress" maxlength="500" autocomplete="street-address" required style="width:100%"></div>
+        <div><label>Ghi chú</label><input id="commerceNote" maxlength="500" style="width:100%"></div>
+        <input id="commercePayment" type="hidden" value="${esc(providers.payments[0]?.id || "")}">
+        <input id="commerceShipping" type="hidden" value="${esc(providers.shipping[0]?.id || "")}">
+        <div class="checkout-choice">
+          <h4>1. Chọn nút thanh toán</h4>
+          <div class="checkout-options" role="group" aria-label="Cổng thanh toán">
+            ${providers.payments.map((provider, index) => `<button type="button" class="checkout-option${index === 0 ? " selected" : ""}" data-commerce-option="payment" data-value="${esc(provider.id)}" aria-pressed="${index === 0}" onclick="Pages._selectCommerceOption('payment','${esc(provider.id)}')">
+              <b>${esc(provider.name)}</b><span>Mô phỏng · bấm để chọn</span>
+            </button>`).join("")}
+          </div>
+        </div>
+        <div class="checkout-choice">
+          <h4>2. Chọn nút vận chuyển</h4>
+          <div class="checkout-options" role="group" aria-label="Đơn vị vận chuyển">
+            ${providers.shipping.map((provider, index) => `<button type="button" class="checkout-option${index === 0 ? " selected" : ""}" data-commerce-option="shipping" data-value="${esc(provider.id)}" data-fee="${Number(provider.fee)}" aria-pressed="${index === 0}" onclick="Pages._selectCommerceOption('shipping','${esc(provider.id)}')">
+              <b>${esc(provider.name)}</b><span>Phí ${Number(provider.fee).toLocaleString("vi-VN")} ₫ · mô phỏng</span>
+            </button>`).join("")}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:12px;flex-wrap:wrap">
+        <b id="commerceOrderTotal" data-subtotal="${subtotal}">Tổng đơn (gồm giao hàng): ${(subtotal + Number(providers.shipping[0]?.fee || 0)).toLocaleString("vi-VN")} ₫</b>
+        <button class="btn checkout-submit" onclick="Pages._checkoutCommerce()">Đặt hàng & đi tới thanh toán</button>
+      </div>
+    </div>` : `<div class="empty">Giỏ hàng đang trống.
+      <p class="muted" style="margin:8px 0 14px">Thêm sản phẩm vào giỏ để chọn phương thức thanh toán và đơn vị giao hàng.</p>
+      <button class="btn" onclick="go('/ingredients')">Mở cửa hàng nguyên liệu</button>
+    </div>`}`;
+};
+Pages._updateProductQuantity = async (productId) => {
+  try {
+    await API.put(`/commerce/cart/${productId}`, {
+      quantity: Number(document.getElementById(`cartQty-${productId}`).value),
+    });
+    await Pages.ingredientCart();
+  } catch (e) { toast(e.message); }
+};
+Pages._removeProduct = async (productId) => {
+  try {
+    await API.del(`/commerce/cart/${productId}`);
+    await Pages.ingredientCart();
+  } catch (e) { toast(e.message); }
+};
+Pages._selectCommerceOption = (kind, value) => {
+  const field = document.getElementById(kind === "payment" ? "commercePayment" : "commerceShipping");
+  if (!field) return;
+  field.value = value;
+  document.querySelectorAll(`[data-commerce-option="${kind}"]`).forEach((button) => {
+    const selected = button.dataset.value === value;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  if (kind === "shipping") {
+    const option = [...document.querySelectorAll('[data-commerce-option="shipping"]')]
+      .find((button) => button.dataset.value === value);
+    const total = document.getElementById("commerceOrderTotal");
+    if (option && total) {
+      const amount = Number(total.dataset.subtotal) + Number(option.dataset.fee);
+      total.textContent = `Tổng đơn (gồm giao hàng): ${amount.toLocaleString("vi-VN")} ₫`;
+    }
+  }
+};
+Pages._checkoutCommerce = async () => {
+  const button = document.querySelector(".checkout-submit");
+  try {
+    const recipientName = document.getElementById("commerceRecipient")?.value.trim();
+    const phone = document.getElementById("commercePhone")?.value.trim();
+    const address = document.getElementById("commerceAddress")?.value.trim();
+    const note = document.getElementById("commerceNote")?.value.trim() || "";
+    if (!recipientName) throw new Error("Vui lòng nhập tên người nhận.");
+    if (!phone || !/^[0-9+().\-\s]{8,30}$/.test(phone))
+      throw new Error("Vui lòng nhập số điện thoại hợp lệ (8–30 ký tự).");
+    if (!address) throw new Error("Vui lòng nhập địa chỉ giao hàng.");
+    if (note.length > 500) throw new Error("Ghi chú không được vượt quá 500 ký tự.");
+    const paymentProvider = document.getElementById("commercePayment")?.value;
+    const shippingProvider = document.getElementById("commerceShipping")?.value;
+    if (!paymentProvider || !shippingProvider)
+      throw new Error("Hãy chọn cổng thanh toán và đơn vị vận chuyển.");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Đang tạo đơn hàng…";
+    }
+    const result = await API.post("/commerce/checkout", {
+      recipientName,
+      phone,
+      address,
+      note,
+      paymentProvider,
+      shippingProvider,
+    });
+    go(result.paymentUrl.replace(/^\/#/, ""));
+  } catch (e) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Đặt hàng & đi tới thanh toán";
+    }
+    toast(e.message);
+  }
+};
+
+Pages.mockPayment = async (m) => {
+  if (!API.user) return Pages.login();
+  const recipeOrder = m[1] === "recipe";
+  const orderId = Number(recipeOrder ? m[2] : m[1]);
+  const providerName = {
+    vnpay: "VNPay",
+    momo: "MoMo",
+    zalopay: "ZaloPay",
+  }[new URLSearchParams(location.hash.split("?")[1] || "").get("provider")] || "Cổng thanh toán";
+  app().innerHTML = `<div class="panel" style="max-width:620px;margin:40px auto;text-align:center">
+    <h2>Thanh toán ${esc(providerName)} (mô phỏng)</h2>
+    <p>Đây là màn hình giả lập để kiểm thử. Không nhập thẻ, không có tiền thật được chuyển.</p>
+    <h3 style="margin:14px 0">Chọn kết quả kiểm thử</h3>
+    <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
+      <button class="btn" onclick="Pages._completeMockPayment(${orderId},'success',${recipeOrder})">Giả lập thanh toán thành công</button>
+      <button class="btn danger" onclick="Pages._completeMockPayment(${orderId},'failure',${recipeOrder})">Giả lập thanh toán thất bại</button>
+    </div>
+    <p style="margin-top:16px"><a class="btn secondary small" href="${recipeOrder ? "#/cart" : "#/ingredient-cart"}">Quay lại giỏ hàng</a></p>
+  </div>`;
+};
+Pages._completeMockPayment = async (orderId, outcome, recipeOrder) => {
+  try {
+    const result = await API.post(
+      recipeOrder ? `/marketplace/mock-payment/${orderId}` : `/commerce/orders/${orderId}/mock-payment`,
+      { outcome },
+    );
+    toast(result.status === "paid"
+      ? recipeOrder ? "Thanh toán mô phỏng thành công; công thức đã mở khóa và doanh thu Creator được ghi nhận."
+        : "Thanh toán mô phỏng thành công; tồn kho đã trừ và vận đơn được tạo."
+      : "Đã ghi nhận thanh toán mô phỏng thất bại.");
+    go(recipeOrder ? "/purchases" : "/orders");
+  } catch (e) { toast(e.message); }
+};
+
+Pages.commerceOrders = async () => {
+  if (!API.user) return Pages.login();
+  const orders = await API.get("/commerce/orders");
+  const labels = {
+    pending_payment: "Chờ thanh toán",
+    payment_failed: "Thanh toán thất bại",
+    paid: "Đã thanh toán",
+    shipped: "Đang giao",
+    delivered: "Đã giao",
+    shipping_cancelled: "Đã hủy vận chuyển",
+    refunded: "Đã hoàn tiền (mô phỏng)",
+    cancelled: "Đã hủy",
+  };
+  app().innerHTML = `<h2 class="section">📦 Đơn nguyên liệu</h2>
+    <p class="muted">Theo dõi thanh toán, đơn vị giao hàng, mã vận đơn và trạng thái giao hàng. Tất cả đều mô phỏng; không có giao dịch/vận đơn thật.</p>
+    ${orders.length ? orders.map((order) => `<div class="panel" style="margin:12px 0">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <b>Đơn #${order.id} · ${esc(labels[order.status] || order.status)}</b>
+        <b>${Number(order.total_amount).toLocaleString("vi-VN")} ₫</b>
+      </div>
+      <div class="muted">Thanh toán: ${esc(order.payment_provider)} · Trạng thái: ${esc(order.payment_status || order.status)} (mô phỏng)</div>
+      <div class="muted">Đơn vị vận chuyển: ${esc(order.shipment_provider || order.shipping_provider)} · Trạng thái: ${esc(order.shipment_status || "Chờ thanh toán")}</div>
+      <div>${esc(order.recipient_name)} · ${esc(order.phone)} · ${esc(order.delivery_address)}</div>
+      ${order.tracking_number ? `<p>Mã vận đơn: <b>${esc(order.tracking_number)}</b></p>` : ""}
+      <ul>${order.items.map((item) => `<li>${esc(item.name)} · ${item.quantity} ${esc(item.unit)} × ${Number(item.unit_price).toLocaleString("vi-VN")} ₫ = ${Number(item.line_total).toLocaleString("vi-VN")} ₫</li>`).join("")}</ul>
+      ${order.shipment_events.length ? `<ol>${order.shipment_events.map((event) => `<li>${esc(event.description)} · ${esc(event.created_at)}</li>`).join("")}</ol>` : ""}
+    </div>`).join("") : '<div class="empty">Bạn chưa có đơn hàng.</div>'}`;
+};
+
+Pages.cart = async () => {
+  if (!API.user) return Pages.login();
+  const items = await API.get("/marketplace/cart");
+  const total = items.reduce((sum, item) => sum + Number(item.price), 0);
+  app().innerHTML = `
+    <h2 class="section">🛒 Giỏ hàng</h2>
+    ${items.length ? `
+      <div class="panel">${items.map((item) => `<div class="comment" style="display:flex;align-items:center;gap:12px">
+        <img src="${esc(item.image)}" alt="" style="width:76px;height:60px;object-fit:cover;border-radius:8px">
+        <div style="flex:1"><b>${esc(item.title)}</b><div class="muted">${Number(item.price).toLocaleString("vi-VN")} ₫</div></div>
+        <button class="btn danger small" onclick="Pages._removeCartItem(${item.id})">Xóa</button>
+      </div>`).join("")}
+      <h3 style="text-align:right;margin:14px 0">Tổng: ${total.toLocaleString("vi-VN")} ₫</h3>
+      <button class="btn" onclick="Pages._checkout()">Thanh toán</button>
+      <p class="muted" style="margin-top:8px">Có VNPay, MoMo và ZaloPay mô phỏng; màn tiếp theo cho chọn kết quả kiểm thử. Không thu tiền thật.</p>
+      </div>` : '<div class="empty">Giỏ hàng đang trống.</div>'}`;
+};
+
+Pages._removeCartItem = async (id) => {
+  try {
+    await API.del(`/marketplace/cart/${id}`);
+    await Pages.cart();
+  } catch (e) { toast(e.message); }
+};
+
+Pages._checkout = async () => {
+  try {
+    const providers = await API.get("/commerce/providers");
+    openModal(
+      "Chọn cổng thanh toán",
+      `<p class="muted">Thanh toán giả lập để kiểm thử; không thu tiền thật.</p>
+      <select id="cartPaymentProvider" style="width:100%">${providers.payments.map((provider) => `<option value="${provider.id}_mock">${esc(provider.name)} (mô phỏng)</option>`).join("")}</select>
+      <button class="btn" style="margin-top:12px" onclick="Pages._checkoutRecipeCart()">Tiếp tục</button>`,
+    );
+  } catch (e) { toast(e.message); }
+};
+Pages._checkoutRecipeCart = async () => {
+  try {
+    const result = await API.post("/marketplace/checkout", {
+      paymentProvider: document.getElementById("cartPaymentProvider").value,
+    });
+    document.getElementById("modal-ov")?.remove();
+    go(result.paymentUrl.replace(/^\/#/, ""));
+  } catch (e) { toast(e.message); }
+};
+
+Pages.purchases = async (query) => {
+  if (!API.user) return Pages.login();
+  const items = await API.get("/marketplace/purchases");
+  const paymentMessage = {
+    success: "Thanh toán thành công. Công thức đã được mở khóa.",
+    failed: "Thanh toán chưa thành công. Đơn hàng chưa được mở khóa.",
+    pending: "VNPay đã trả về kết quả. Hệ thống đang chờ IPN xác nhận từ máy chủ thanh toán; hãy tải lại sau ít phút.",
+    invalid: query?.message || "Không xác minh được giao dịch.",
+  }[query?.payment];
+  app().innerHTML = `
+    <h2 class="section">📚 Công thức đã mua</h2>
+    ${paymentMessage ? `<div class="panel">${esc(paymentMessage)}</div>` : ""}
+    ${items.length ? `<div class="grid">${items.map((item) => recipeCard({
+      ...item, is_premium: true, views: 0, prep_minutes: 0, cook_minutes: 0,
+      avg_rating: 0, rating_count: 0, difficulty: "Đã sở hữu",
+    })).join("")}</div>` : '<div class="empty">Bạn chưa mua công thức nào.</div>'}`;
+};
+
+Pages.creator = async () => {
+  if (!API.user) return Pages.login();
+  if (API.user.role !== "creator" && API.user.role !== "admin") {
+    app().innerHTML = `<div class="panel" style="max-width:620px;margin:auto">
+      <h2>🍳 Trở thành Creator</h2>
+      <p class="muted" style="margin:10px 0">Đăng công thức Premium và theo dõi các giao dịch mua.</p>
+      <label>Giới thiệu về bạn</label><textarea id="creatorBio" maxlength="1000" rows="4" style="width:100%"></textarea>
+      <button class="btn" style="margin-top:12px" onclick="Pages._registerCreator()">Đăng ký Creator</button>
+    </div>`;
+    return;
+  }
+  const [sales, recipes, walletData] = await Promise.all([
+    API.get("/marketplace/creator/sales"),
+    API.get("/marketplace/creator/recipes"),
+    API.get("/marketplace/creator/wallet"),
+  ]);
+  const revenue = Number(walletData.wallet.total_earned || 0);
+  app().innerHTML = `<h2 class="section">🍳 Creator Studio</h2>
+    <div class="stat-grid">
+      <div class="stat"><b>${sales.length}</b>Lượt mua</div>
+      <div class="stat"><b>${revenue.toLocaleString("vi-VN")} ₫</b>Thu nhập ròng sau hoa hồng</div>
+      <div class="stat"><b>${Number(walletData.wallet.available_balance).toLocaleString("vi-VN")} ₫</b>Số dư khả dụng</div>
+      <div class="stat"><b>${Number(walletData.wallet.held_balance).toLocaleString("vi-VN")} ₫</b>Đang chờ xử lý</div>
+    </div>
+    <div class="panel" style="margin:14px 0">
+      <h3>Ví Creator · Hoa hồng nền tảng 10%</h3>
+      <p class="muted">Tỷ lệ hoa hồng được chụp lại trên từng đơn; doanh thu cũ không bị tính lại khi cấu hình thay đổi. Rút tiền ở bản này được xử lý mô phỏng bởi Admin, không tự chuyển khoản ngân hàng.</p>
+      <label>Ngân hàng</label><input id="creatorBankName" maxlength="100" value="${esc(walletData.bank.bank_name || "")}" style="width:100%">
+      <label>Số tài khoản</label><input id="creatorBankAccount" maxlength="100" value="${esc(walletData.bank.bank_account || "")}" style="width:100%">
+      <label>Tên chủ tài khoản</label><input id="creatorAccountName" maxlength="150" value="${esc(walletData.bank.account_name || "")}" style="width:100%">
+      <button class="btn secondary small" style="margin-top:8px" onclick="Pages._saveCreatorBank()">Lưu thông tin nhận tiền</button>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <input id="creatorWithdrawAmount" type="number" min="50000" max="99999999" step="1000" placeholder="Số tiền rút (tối thiểu 50.000)" style="flex:1">
+        <button class="btn" onclick="Pages._requestCreatorWithdrawal()">Gửi yêu cầu rút</button>
+      </div>
+    </div>
+    <button class="btn" style="margin:14px 0" onclick="go('/new-recipe')">＋ Đăng công thức Premium</button>
+    <h3>Công thức của bạn</h3>
+    ${recipes.length ? `<div class="panel">${recipes.map((recipe) => {
+      const listingStatus = recipe.is_premium
+        ? recipe.approved ? "Premium · Đang bán" : "Premium · Đang duyệt"
+        : recipe.is_public && recipe.approved ? "Miễn phí · Đang hiển thị"
+          : recipe.is_public ? "Miễn phí · Chờ duyệt" : "Miễn phí · Đang ẩn";
+      return `<div class="comment" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1"><b>${esc(recipe.title)}</b>
+        <div class="muted">${esc(listingStatus)}${recipe.is_premium ? ` · ${Number(recipe.price).toLocaleString("vi-VN")} ₫` : ""}</div>
+      </div>
+      <button class="btn secondary small" onclick="go('/edit-recipe/${recipe.id}${recipe.is_premium ? "" : "?sell=1"}')">${recipe.is_premium ? "Sửa" : "Đăng bán"}</button>
+      ${recipe.is_premium ? `<button class="btn danger small" onclick="Pages._withdrawPremiumRecipe(${recipe.id})">Thu hồi</button>` : ""}
+    </div>`;
+    }).join("")}</div>` : '<div class="empty">Bạn chưa đăng công thức.</div>'}
+    <h3>Giao dịch bán</h3>
+    ${sales.length ? `<div class="panel">${sales.map((sale) => `<div class="comment">${esc(sale.title)} · Giá ${Number(sale.price).toLocaleString("vi-VN")} ₫ · Hoa hồng ${Number(sale.commission_amount).toLocaleString("vi-VN")} ₫ (${Number(sale.commission_rate_bps) / 100}%) · Nhận ${Number(sale.creator_amount).toLocaleString("vi-VN")} ₫ · ${esc(sale.purchased_at)}</div>`).join("")}</div>` : '<div class="empty">Chưa có giao dịch.</div>'}
+    <h3>Yêu cầu rút tiền</h3>
+    ${walletData.withdrawals.length ? `<div class="panel">${walletData.withdrawals.map((request) => `<div class="comment">#${request.id} · ${Number(request.amount).toLocaleString("vi-VN")} ₫ · ${esc(request.status)} · ${esc(request.bank_name)} · ${esc(request.bank_account)}${request.admin_note ? `<div class="muted">${esc(request.admin_note)}</div>` : ""}</div>`).join("")}</div>` : '<div class="empty">Chưa có yêu cầu rút tiền.</div>'}
+    <h3>Sổ cái ví</h3>
+    ${walletData.ledger.length ? `<div class="panel">${walletData.ledger.map((entry) => `<div class="comment">${esc(entry.note)} · Thực thu/chi ${Number(entry.net_amount).toLocaleString("vi-VN")} ₫ · ${esc(entry.created_at)}</div>`).join("")}</div>` : '<div class="empty">Chưa có giao dịch ví.</div>'}`;
+};
+
+Pages._saveCreatorBank = async () => {
+  try {
+    await API.put("/marketplace/creator/bank-account", {
+      bank_name: document.getElementById("creatorBankName").value,
+      bank_account: document.getElementById("creatorBankAccount").value,
+      account_name: document.getElementById("creatorAccountName").value,
+    });
+    toast("Đã lưu thông tin nhận tiền");
+  } catch (e) { toast(e.message); }
+};
+Pages._requestCreatorWithdrawal = async () => {
+  try {
+    await API.post("/marketplace/creator/withdrawals", {
+      amount: Number(document.getElementById("creatorWithdrawAmount").value),
+    });
+    toast("Đã gửi yêu cầu rút tiền chờ Admin xử lý");
+    await Pages.creator();
+  } catch (e) { toast(e.message); }
+};
+
+Pages._withdrawPremiumRecipe = async (id) => {
+  if (!confirm("Thu hồi công thức Premium? Công thức sẽ chuyển thành miễn phí và không nhận đơn mua mới.")) return;
+  try {
+    await API.post(`/marketplace/creator/recipes/${id}/withdraw`, {});
+    toast("Đã thu hồi; công thức được chuyển thành miễn phí.");
+    await Pages.creator();
+  } catch (e) { toast(e.message); }
+};
+
+Pages._registerCreator = async () => {
+  try {
+    const result = await API.post("/marketplace/creator", { bio: document.getElementById("creatorBio").value });
+    API.save(result.token, result.user);
+    renderNavbar();
+    await Pages.creator();
+    toast("Đăng ký Creator thành công");
+  } catch (e) { toast(e.message); }
+};
+
 /* ---------- Chi tiết công thức + Cooking Mode ---------- */
 Pages.recipe = async (m) => {
   const r = await API.get("/recipes/" + m[1]);
@@ -151,6 +573,11 @@ Pages.recipe = async (m) => {
     <div>
       <h1>${esc(r.title)}</h1>
       <p class="muted">${esc(r.description)}</p>
+      ${r.is_premium ? `<div class="badge" style="margin:8px 0">⭐ Premium · ${Number(r.price).toLocaleString("vi-VN")} ₫</div>` : ""}
+      ${r.is_locked ? `<div class="panel"><b>🔒 Công thức Premium</b><p style="margin:6px 0 12px">Mua công thức để mở khóa nguyên liệu và toàn bộ hướng dẫn.</p>
+        ${API.user ? `<button class="btn" onclick="Pages._buyPremium(${r.id})">🛒 Mua công thức</button>
+          <button class="btn secondary" style="margin-left:6px" onclick="Pages._addPremiumToCart(${r.id})">Thêm vào giỏ hàng</button>` : `<button class="btn" onclick="go('/login')">🛒 Mua công thức · đăng nhập</button>`}
+      </div>` : ""}
       <div><span class="stars">${starHtml(r.avg_rating)}</span> ${r.avg_rating} · ${r.rating_count} đánh giá · 👁 ${r.views} lượt xem</div>
       <div style="margin:10px 0"><span class="badge">${esc(r.category)}</span> <span class="badge">${esc(r.country)}</span>
         <span class="badge">${esc(r.difficulty)}</span> ${r.diet ? `<span class="badge">${esc(r.diet)}</span>` : ""}
@@ -166,16 +593,18 @@ Pages.recipe = async (m) => {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="Pages._toggleFav(${r.id})" id="favBtn">${r.is_fav ? "💔 Bỏ yêu thích" : "❤️ Yêu thích"}</button>
         ${
-          API.user
-            ? `<button class="btn secondary" onclick="Pages._openCollectionPicker(${r.id})">📁 Thêm vào bộ sưu tập</button>
+          !r.is_locked
+            ? `<button class="btn" onclick="Pages._buyRecipe(${r.id},${!!r.is_premium},${API.user?.id === r.user_id},${!!r.is_locked})">🛒 Mua công thức</button>
+        ${API.user ? `<button class="btn secondary" onclick="Pages._openCollectionPicker(${r.id})">📁 Thêm vào bộ sưu tập</button>
         <button class="btn secondary" onclick="Pages._addToPlan(${r.id})">📅 Thêm vào thực đơn</button>
-        <button class="btn secondary" onclick="Pages._toShopping(${r.id})">🛒 Thêm nguyên liệu vào danh sách mua</button>`
+        <button class="btn secondary" onclick="Pages._toShopping(${r.id})">🛒 Thêm nguyên liệu vào danh sách mua</button>` : ""}`
             : ""
         }
-        <button class="btn secondary" onclick="Pages.cookingMode(${JSON.stringify(steps).replace(/"/g, "&quot;")}, '${esc(r.title).replace(/'/g, "\\'")}', ${r.cook_minutes})">👨‍🍳 Cooking Mode</button>
+        ${!r.is_locked ? `<button class="btn secondary" onclick="Pages.cookingMode(${JSON.stringify(steps).replace(/"/g, "&quot;")}, '${esc(r.title).replace(/'/g, "\\'")}', ${r.cook_minutes})">👨‍🍳 Cooking Mode</button>` : ""}
         ${
           API.user && API.user.id === r.user_id
-            ? `<button class="btn secondary" onclick="go('/edit-recipe/${r.id}')">✏️ Sửa</button>
+            ? `${!r.is_premium ? `<button class="btn" onclick="Pages._sellExistingRecipe(${r.id})">${API.user.role === "creator" || API.user.role === "admin" ? "⭐ Đăng bán công thức này" : "🍳 Đăng ký Creator để bán"}</button>` : ""}
+        <button class="btn secondary" onclick="go('/edit-recipe/${r.id}')">✏️ Sửa</button>
         <button class="btn danger" onclick="Pages._deleteRecipe(${r.id})">🗑 Xóa</button>`
             : ""
         }
@@ -184,17 +613,72 @@ Pages.recipe = async (m) => {
     </div>
   </div>
 
-  <div class="panel">
+  ${r.is_locked ? "" : `<div class="panel">
     <h2>🥘 Nguyên liệu</h2>
     <ul class="ing-list">${r.ingredients.map((i) => `<li>${esc(i.name)} — <b>${esc(i.quantity)} ${esc(i.unit)}</b></li>`).join("")}</ul>
   </div>
   <div class="panel">
     <h2>📝 Các bước chế biến</h2>
     <ol class="steps">${steps.map((s) => `<li style="margin:10px 0">${esc(s.text)}</li>`).join("")}</ol>
-  </div>
+  </div>`}
   ${Comments.html(r)}
   <script>Comments.bind(${JSON.stringify(r.ratings).replace(/</g, "\\u003c")}, ${r.id})</script>`;
   Comments.bind(r.ratings, r.id);
+};
+
+Pages._sellExistingRecipe = (id) => {
+  if (API.user?.role !== "creator" && API.user?.role !== "admin") {
+    go("/creator");
+    return;
+  }
+  go(`/edit-recipe/${id}?sell=1`);
+};
+
+Pages._buyRecipe = (id, isPremium, isOwner, isLocked) => {
+  const recipeId = Number(id);
+  if (!Number.isSafeInteger(recipeId) || recipeId < 1) return toast("Công thức không hợp lệ");
+  if (isPremium && !isOwner && isLocked) {
+    if (!API.user) return go("/login");
+    return Pages._buyPremium(recipeId);
+  }
+  if (isPremium && !isOwner && API.user?.role !== "admin") {
+    toast("Bạn đã sở hữu công thức này.");
+    return go("/purchases");
+  }
+  if (isPremium && !isOwner && API.user?.role === "admin")
+    return Pages._buyPremium(recipeId);
+  if (isPremium && isOwner) {
+    toast("Đây là công thức của bạn; mở Creator Studio để quản lý bán.");
+    return go("/creator");
+  }
+  toast("Công thức này miễn phí, không cần thanh toán.");
+};
+
+Pages._addPremiumToCart = async (id) => {
+  try {
+    await API.post(`/marketplace/cart/${id}`);
+    toast("Đã thêm công thức vào giỏ hàng");
+    go("/cart");
+  } catch (e) { toast(e.message); }
+};
+Pages._buyPremium = async (id) => {
+  const providers = await API.get("/commerce/providers");
+  openModal(
+    "Chọn cổng thanh toán",
+    `<p class="muted">Chọn cổng thanh toán giả lập. Không phát sinh giao dịch thật.</p>
+    <select id="premiumPaymentProvider" style="width:100%">${providers.payments.map((provider) => `<option value="${provider.id}_mock">${esc(provider.name)} (mô phỏng)</option>`).join("")}</select>
+    <button class="btn" style="margin-top:12px" onclick="Pages._checkoutPremium(${id})">Tạo đơn thanh toán</button>`,
+  );
+};
+Pages._checkoutPremium = async (id) => {
+  try {
+    const result = await API.post("/marketplace/checkout", {
+      recipeId: id,
+      paymentProvider: document.getElementById("premiumPaymentProvider").value,
+    });
+    document.getElementById("modal-ov")?.remove();
+    go(result.paymentUrl.replace(/^\/#/, ""));
+  } catch (e) { toast(e.message); }
 };
 
 Pages._toggleFav = async (id) => {
@@ -318,7 +802,7 @@ const Comments = {
   <div class="panel">
     <h2>💬 Đánh giá & bình luận</h2>
     ${
-      API.user
+      API.user && !r.is_locked
         ? `
       <div style="margin:12px 0">
         <div id="pickStars" class="star-picker" role="radiogroup" aria-label="Chọn số sao">
@@ -335,6 +819,8 @@ const Comments = {
           <button class="btn small" onclick="Comments.submit(${r.id})">Gửi</button>
         </div>
       </div>`
+        : r.is_locked
+          ? '<p class="muted">Mua công thức để đánh giá và bình luận.</p>'
         : '<p class="muted">Đăng nhập để đánh giá và bình luận.</p>'
     }
     <div id="cList"></div>
@@ -345,7 +831,7 @@ const Comments = {
     this.stars = 0;
     this.photo = "";
     this.replyTo = null;
-    if (API.user) {
+    if (API.user && document.getElementById("cText")) {
       const previous = list.find(
         (rating) =>
           String(rating.user_id) === String(API.user.id) && !rating.parent_id,
@@ -625,6 +1111,7 @@ Pages.profile = async () => {
           (r) =>
             recipeCard(r) +
             `<div style="margin-top:-6px;background:#fff;padding:0 14px 10px;box-shadow:var(--shadow)">
+          ${!r.is_premium ? `<button class="btn small" onclick="Pages._sellExistingRecipe(${r.id})">${API.user.role === "creator" || API.user.role === "admin" ? "⭐ Đăng bán công thức" : "🍳 Trở thành Creator để bán"}</button> · ` : ""}
           <a onclick="go('/edit-recipe/${r.id}')">✏️ Sửa</a> · <a onclick="Pages._deleteRecipe(${r.id})">🗑 Xóa</a></div>`,
         )
         .join("") || '<div class="empty">Chưa có công thức nào</div>';
@@ -676,14 +1163,18 @@ Pages._changePw = async () => {
 };
 Pages._deleteAcc = async () => {
   if (!confirm("Xóa tài khoản vĩnh viễn? Mọi dữ liệu sẽ mất!")) return;
-  await API.del("/auth/me");
-  API.logout();
-  go("/");
-  toast("Tài khoản đã bị xóa");
+  try {
+    await API.del("/auth/me");
+    API.logout();
+    go("/");
+    toast("Tài khoản đã bị xóa");
+  } catch (e) {
+    toast(e.message);
+  }
 };
 
 /* ---------- Thêm / sửa công thức ---------- */
-Pages.recipeForm = async (m) => {
+Pages.recipeForm = async (m, q = {}) => {
   const editing = !!m;
   let r = {
     image: "/img/food-placeholder.jpg",
@@ -698,7 +1189,7 @@ Pages.recipeForm = async (m) => {
   if (editing) r = await API.get("/recipes/" + m[1]);
   const cats = await API.get("/recipes/meta/categories");
   app().innerHTML = `<div class="panel" style="max-width:760px;margin:auto">
-    <h2>${editing ? "✏️ Sửa công thức" : "＋ Thêm công thức mới"}</h2>
+    <h2>${q.sell === "1" && editing ? "⭐ Đăng bán công thức có sẵn" : editing ? "✏️ Sửa công thức" : "＋ Thêm công thức mới"}</h2>
     <label>Tên món ăn *</label><input id="rfTitle" value="${esc(r.title || "")}" style="width:100%">
     <label>Mô tả</label><textarea id="rfDesc" rows="2" style="width:100%">${esc(r.description || "")}</textarea>
     <div style="display:flex;gap:12px;align-items:center;margin-top:8px">
@@ -717,6 +1208,12 @@ Pages.recipeForm = async (m) => {
       <div><label>Chế độ ăn</label><select id="rfDiet"><option value="">Không</option>${["Chay", "Vegan", "Keto"].map((d) => `<option ${r.diet === d ? "selected" : ""}>${d}</option>`).join("")}</select></div>
       <div><label>Công khai</label><select id="rfPub"><option value="1" ${r.is_public ? "selected" : ""}>Công khai</option><option value="0" ${!r.is_public ? "selected" : ""}>Riêng tư</option></select></div>
     </div>
+      ${API.user?.role === "creator" || API.user?.role === "admin" ? `
+      <div class="panel" style="margin-top:12px">
+        <label><input id="rfPremium" type="checkbox" ${r.is_premium || q.sell === "1" ? "checked" : ""}> Đăng bán công thức Premium</label>
+        <label>Giá bán (VNĐ)</label><input id="rfPrice" type="number" min="5000" max="99999999" step="1000" value="${r.price || ""}" placeholder="Ví dụ: 50000">
+        <p class="muted">Công thức mới hoặc công thức bạn đã đăng trước đây đều có thể bán. Khi bật Premium, công thức sẽ chờ Admin duyệt trước khi xuất hiện trong Marketplace.</p>
+      </div>` : !editing ? `<div class="panel" style="margin-top:12px">Muốn bán công thức Premium? <a href="#/creator">Đăng ký Creator</a>.</div>` : ""}
     <label>Thông tin dinh dưỡng (mỗi khẩu phần)</label>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
       <input id="rfCal" type="number" placeholder="Calo" value="${r.calories || ""}">
@@ -788,6 +1285,8 @@ Pages._saveRecipe = async (id) => {
     difficulty: v("rfDiff"),
     diet: v("rfDiet"),
     is_public: v("rfPub") === "1",
+    is_premium: !!document.getElementById("rfPremium")?.checked,
+    price: Number(document.getElementById("rfPrice")?.value || 0),
     calories: +v("rfCal"),
     protein: +v("rfPro"),
     carbs: +v("rfCarb"),
@@ -927,17 +1426,43 @@ Pages._toggleFollow = async (id, btn) => {
 /* ---------- Meal Planner ---------- */
 Pages.planner = async () => {
   if (!API.user) return Pages.login();
+  const dateKey = (value) =>
+    value instanceof Date
+      ? value.toISOString().slice(0, 10)
+      : String(value ?? "").slice(0, 10);
+  const pad = (value) => String(value).padStart(2, "0");
   const start = new Date();
-  start.setDate(start.getDate() - start.getDay() + 1); // thu 2
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   const days = [...Array(7)].map((_, i) => {
     const d = new Date(start);
     d.setDate(d.getDate() + i);
-    return d.toISOString().slice(0, 10);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   });
   const plans = await API.get(
     `/recipes/mealplan?start=${days[0]}&end=${days[6]}`,
   );
+  const planBySlot = new Map(
+    plans.map((plan) => [`${dateKey(plan.date)}:${plan.slot}`, plan]),
+  );
   const names = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
+  const slots = ["sang", "trua", "toi"];
+  const slotNames = { sang: "Sáng", trua: "Trưa", toi: "Tối" };
+  const mealDetails = days.flatMap((date, dayIndex) =>
+    slots
+      .map((slot) => ({
+        date,
+        dayName: names[dayIndex],
+        slot,
+        plan: planBySlot.get(`${date}:${slot}`),
+      }))
+      .filter((meal) => meal.plan),
+  );
+  const sumNutrition = (field) =>
+    plans.reduce((sum, plan) => sum + (Number(plan[field]) || 0), 0);
+  const displayNutrition = (value, unit) =>
+    value == null || value === ""
+      ? "Chưa cập nhật"
+      : `${Number(value).toLocaleString("vi-VN")} ${unit}`;
   app().innerHTML = `
     <h2 class="section">📅 Meal Planner — Kế hoạch tuần này</h2>
     <p class="muted">Bấm vào ô trống của một bữa để chọn công thức. Bấm vào món đã chọn để đánh dấu hoàn thành.</p>
@@ -946,9 +1471,9 @@ Pages.planner = async () => {
       .map(
         (d, i) => `
       <div class="day"><b>${names[i]}</b><div class="muted">${d.slice(5)}</div>
-        ${["sang", "trua", "toi"]
+        ${slots
           .map((slot) => {
-            const p = plans.find((x) => x.date === d && x.slot === slot);
+            const p = planBySlot.get(`${d}:${slot}`);
             return `<div class="meal-row ${p && p.done ? "done" : ""}" ${p ? `onclick="Pages._toggleDone(${p.id})"` : `onclick="Pages._pickMeal('${d}','${slot}')"`}>
               ${slot === "sang" ? "🌅 Sáng: " : slot === "trua" ? "☀️ Trưa: " : "🌙 Tối: "}${p ? esc(p.title) : "+ chọn món"}
             </div>`;
@@ -960,27 +1485,59 @@ Pages.planner = async () => {
     </div>
     <div class="panel" style="margin-top:18px">
       <h3>🥗 Theo dõi dinh dưỡng tuần</h3>
-      <p>Đã lập <b>${plans.length}</b> bữa · Hoàn thành <b>${plans.filter((p) => p.done).length}</b> bữa · Tổng ~<b>${plans.reduce((s, p) => s + (p.calories || 0), 0)}</b> kcal đã lên kế hoạch</p>
-      <p class="muted">Trung bình Protein/Carb/Fat được hiển thị trong chi tiết từng công thức.</p>
+      <p>Đã lập <b>${plans.length}</b> bữa · Hoàn thành <b>${plans.filter((p) => p.done).length}</b> bữa · Tổng ~<b>${sumNutrition("calories").toLocaleString("vi-VN")}</b> kcal theo khẩu phần đã lên kế hoạch</p>
+      <p>Protein: <b>${sumNutrition("protein").toLocaleString("vi-VN")} g</b> · Carb: <b>${sumNutrition("carbs").toLocaleString("vi-VN")} g</b> · Fat: <b>${sumNutrition("fat").toLocaleString("vi-VN")} g</b></p>
+      <p class="muted">Chi tiết dưới đây dựa trên thông tin dinh dưỡng mỗi khẩu phần của công thức.</p>
+      ${mealDetails.length ? `<div style="display:grid;gap:8px;margin-top:12px">
+        ${mealDetails.map(({ dayName, date, slot, plan }) => `<div class="comment" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div><b>${dayName} ${date.slice(5)} · ${slotNames[slot]}</b><div>${esc(plan.title)}</div></div>
+          <div class="muted">Calo: ${displayNutrition(plan.calories, "kcal")} · Protein: ${displayNutrition(plan.protein, "g")} · Carb: ${displayNutrition(plan.carbs, "g")} · Fat: ${displayNutrition(plan.fat, "g")}</div>
+        </div>`).join("")}
+      </div>` : '<p class="muted">Chưa có món nào trong tuần này. Hãy chọn món trong một ô bữa ăn để xem kế hoạch và dinh dưỡng tại đây.</p>'}
     </div>`;
 };
 Pages._pickMeal = async (date, slot) => {
-  const data = await API.get("/recipes?sort=views");
-  const opts = data.items
-    .map(
-      (r) =>
-        `<div class="cat-chip" onclick="Pages._setMeal('${date}','${slot}',${r.id})">${esc(r.title)}</div>`,
-    )
-    .join("");
-  openModal(
-    `Chọn món cho bữa ${slot} ngày ${date}`,
-    `<div class="cat-chips">${opts}</div>`,
-  );
+  try {
+    const items = await API.get("/recipes/mealplan/recipes");
+    openModal(
+      `Chọn món cho bữa ${slot} ngày ${date}`,
+      `<label for="mealRecipeSearch">Tìm món theo tên hoặc nguyên liệu</label>
+      <input id="mealRecipeSearch" type="search" maxlength="100" placeholder="Ví dụ: phở, gà..." style="width:100%;margin-bottom:12px"
+        oninput="Pages._searchMealRecipes('${date}','${slot}')">
+      <div id="mealRecipeResults">${Pages._mealRecipeOptions(date, slot, items)}</div>`,
+    );
+  } catch (e) { toast(e.message); }
+};
+Pages._mealRecipeOptions = (date, slot, items) => items.length
+  ? `<div style="display:grid;gap:8px">${items.map((recipe) =>
+    `<button class="btn secondary" style="text-align:left" onclick="Pages._setMeal('${date}','${slot}',${recipe.id})">${esc(recipe.title)}${recipe.category ? ` · ${esc(recipe.category)}` : ""}</button>`,
+  ).join("")}</div>`
+  : '<p class="muted">Không tìm thấy món phù hợp.</p>';
+Pages._searchMealRecipes = (date, slot) => {
+  clearTimeout(Pages._mealSearchTimer);
+  const search = document.getElementById("mealRecipeSearch")?.value.trim() || "";
+  const requestId = (Pages._mealSearchId || 0) + 1;
+  Pages._mealSearchId = requestId;
+  Pages._mealSearchTimer = setTimeout(async () => {
+    const results = document.getElementById("mealRecipeResults");
+    if (!results) return;
+    results.innerHTML = '<p class="muted">Đang tìm...</p>';
+    try {
+      const items = await API.get(`/recipes/mealplan/recipes?q=${encodeURIComponent(search)}`);
+      if (requestId !== Pages._mealSearchId) return;
+      results.innerHTML = Pages._mealRecipeOptions(date, slot, items);
+    } catch (e) {
+      if (requestId === Pages._mealSearchId && results.isConnected)
+        results.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+    }
+  }, 250);
 };
 Pages._setMeal = async (date, slot, rid) => {
-  await API.post("/recipes/mealplan", { date, slot, recipe_id: rid });
-  document.getElementById("modal-ov")?.remove();
-  Pages.planner();
+  try {
+    await API.post("/recipes/mealplan", { date, slot, recipe_id: rid });
+    document.getElementById("modal-ov")?.remove();
+    Pages.planner();
+  } catch (e) { toast(e.message); }
 };
 Pages._toggleDone = async (id) => {
   await API.post(`/recipes/mealplan/${id}/done`);
@@ -988,7 +1545,7 @@ Pages._toggleDone = async (id) => {
 };
 
 /* ---------- Shopping List ---------- */
-Pages.shopping = async () => {
+Pages.shopping = async (q = {}) => {
   if (!API.user) return Pages.login();
   const items = await API.get("/recipes/shopping");
   const total = items.length,
@@ -996,6 +1553,11 @@ Pages.shopping = async () => {
   app().innerHTML = `
     <h2 class="section">🛒 Danh sách mua sắm</h2>
     <p class="muted">Đã mua ${bought}/${total} nguyên liệu · Có thể tạo tự động từ công thức (nút 🛒 trong trang chi tiết món).</p>
+    <div class="panel" style="margin:12px 0">
+      <b>Muốn đặt mua nguyên liệu?</b>
+      <p class="muted">Mở cửa hàng để chọn sản phẩm đóng gói có giá và tồn kho riêng, thêm giỏ hàng, chọn cổng thanh toán/vận chuyển mô phỏng.</p>
+      <button class="btn" onclick="go('/ingredients')">Mở cửa hàng nguyên liệu</button>
+    </div>
     <div style="display:flex;gap:8px;margin:12px 0">
       <input id="siName" placeholder="Tên nguyên liệu" style="flex:1">
       <input id="siQty" placeholder="Số lượng" style="width:130px">
@@ -1009,13 +1571,25 @@ Pages.shopping = async () => {
               i,
             ) => `<div class="comment" style="display:flex;align-items:center;gap:10px">
         <input type="checkbox" ${i.bought ? "checked" : ""} onchange="Pages._bought(${i.id}, this.checked)">
-        <span style="flex:1;${i.bought ? "text-decoration:line-through;opacity:.55" : ""}"><b>${esc(i.name)}</b> ${esc(i.quantity || "")}</span>
+        <span style="flex:1;${i.bought ? "text-decoration:line-through;opacity:.55" : ""}"><b>${esc(i.name)}</b> ${esc(i.quantity || "")}
+        </span>
         <button class="btn danger small" onclick="Pages._delShop(${i.id})">✕</button>
       </div>`,
           )
           .join("") || '<div class="empty">Danh sách trống</div>'
       }
     </div>`;
+};
+Pages._checkoutGroceries = async () => {
+  try {
+    const result = await API.post("/marketplace/grocery-checkout", {
+      recipientName: document.getElementById("groceryRecipient").value,
+      phone: document.getElementById("groceryPhone").value,
+      address: document.getElementById("groceryAddress").value,
+      note: document.getElementById("groceryNote").value,
+    });
+    location.href = result.paymentUrl;
+  } catch (e) { toast(e.message); }
 };
 Pages._addShop = async () => {
   const n = document.getElementById("siName").value.trim();
@@ -1226,6 +1800,8 @@ Pages.admin = async () => {
     "catalog",
     "comments",
     "reports",
+    "commerce",
+    "grocery",
     "logs",
   ];
   app().innerHTML = `
@@ -1241,6 +1817,8 @@ Pages.admin = async () => {
               catalog: "🗂 Danh mục & Nguyên liệu",
               comments: "💬 Bình luận",
               reports: "🚩 Báo cáo",
+              commerce: "🛍️ Thương mại",
+              grocery: "📦 Đơn nguyên liệu",
               logs: "📜 Nhật ký",
             }[t]
           }</button>`,
@@ -1306,6 +1884,7 @@ Pages._atab = async (t) => {
             (
               r,
             ) => `<div class="comment"><b>${esc(r.title)}</b> — ${esc(r.username)}
+        ${r.is_premium ? `<span class="badge">Premium · ${Number(r.price).toLocaleString("vi-VN")} ₫</span>` : ""}
         <button class="btn small" onclick="Pages._approve(${r.id},1)">✅ Duyệt</button>
         <button class="btn danger small" onclick="Pages._approve(${r.id},0)">❌ Từ chối</button></div>`,
           )
@@ -1318,7 +1897,7 @@ Pages._atab = async (t) => {
         .map(
           (
             r,
-          ) => `<tr><td>${r.id}</td><td><a href="#/recipe/${r.id}">${esc(r.title)}</a></td><td>${esc(r.username)}</td>
+          ) => `<tr><td>${r.id}</td><td><a href="#/recipe/${r.id}">${esc(r.title)}</a>${r.is_premium ? `<div class="badge">Premium · ${Number(r.price).toLocaleString("vi-VN")} ₫</div>` : ""}</td><td>${esc(r.username)}</td>
         <td>${r.avg_rating}</td><td>${r.views}</td><td>${r.approved ? "✅" : "⏳"}</td>
         <td>${canManage ? `<button class="btn secondary small" onclick="Pages._adminEditRecipe(${r.id})">Sửa</button>
         <button class="btn danger small" onclick="Pages._delRecipeAd(${r.id})">Xóa</button>` : ""}</td></tr>`,
@@ -1345,8 +1924,8 @@ Pages._atab = async (t) => {
           .join("")}
         ${canManage ? '<div style="display:flex;gap:8px;margin-top:10px"><input id="ncName" placeholder="Tên danh mục"><input id="ncIcon" placeholder="Icon" style="width:70px"><button class="btn small" onclick="Pages._addCat()">Thêm</button></div>' : ""}</div>
       <div class="panel"><h3>🥕 Nguyên liệu</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">${ings.map((i) => `<span class="badge">${esc(i.name)} ${canManage ? `<a onclick="Pages._adminEditIngredient(${i.id})" title="Sửa">✏️</a> <a onclick="Pages._delIng(${i.id})" title="Xóa">✕</a>` : ""}</span>`).join("")}</div>
-        ${canManage ? '<div style="display:flex;gap:8px;margin-top:10px"><input id="niName" placeholder="Nguyên liệu mới"><button class="btn small" onclick="Pages._addIng2()">Thêm</button></div>' : ""}</div></div>`;
+        <div style="display:flex;flex-wrap:wrap;gap:6px">${ings.map((i) => `<span class="badge">${esc(i.name)} · ${Number(i.unit_price || 0).toLocaleString("vi-VN")} ₫/dòng ${canManage ? `<a onclick="Pages._adminEditIngredient(${i.id})" title="Sửa">✏️</a> <a onclick="Pages._delIng(${i.id})" title="Xóa">✕</a>` : ""}</span>`).join("")}</div>
+        ${canManage ? '<div style="display:flex;gap:8px;margin-top:10px"><input id="niName" placeholder="Nguyên liệu mới"><input id="niPrice" type="number" min="0" max="99999999" placeholder="Giá/dòng (₫)"><button class="btn small" onclick="Pages._addIng2()">Thêm</button></div>' : ""}</div></div>`;
   }
   if (t === "comments") {
     const cs = await API.get("/admin/comments");
@@ -1374,11 +1953,235 @@ Pages._atab = async (t) => {
         )
         .join("") || '<div class="empty">Không có báo cáo</div>';
   }
+  if (t === "commerce") {
+    el.innerHTML = `<div class="tabs" id="commerceTabs">
+      ${[
+        ["suppliers", "Nhà cung cấp"],
+        ["products", "Sản phẩm & kho"],
+        ["orders", "Đơn hàng"],
+        ["payments", "Giao dịch"],
+        ["shipments", "Vận chuyển"],
+        ["wallet", "Creator & hoa hồng"],
+      ].map(([key, label], index) => `<button data-commerce-tab="${key}" class="${index === 0 ? "active" : ""}" onclick="Pages._adminCommerceTab('${key}')">${label}</button>`).join("")}
+    </div><div id="commerceDetail"></div>`;
+    await Pages._adminCommerceTab("suppliers");
+  }
   if (t === "logs") {
     const logs = await API.get("/admin/logs");
     el.innerHTML = `<table><tr><th>Thời gian</th><th>User</th><th>Hành động</th><th>Chi tiết</th></tr>
       ${logs.map((l) => `<tr><td>${esc(l.created_at)}</td><td>${esc(l.username || "-")}</td><td>${esc(l.action)}</td><td>${esc(l.detail)}</td></tr>`).join("")}</table>`;
   }
+  if (t === "grocery") {
+    const orders = await API.get("/admin/grocery-orders");
+    const statusLabels = {
+      pending: "Chờ thanh toán",
+      paid: "Đã thanh toán",
+      failed: "Thanh toán thất bại",
+      expired: "Hết hạn",
+    };
+    el.innerHTML = orders.length ? `<div class="panel">${orders.map((order) => `<div class="comment">
+      <b>Đơn #${order.id}</b> · User #${order.user_id} · ${Number(order.total_amount).toLocaleString("vi-VN")} ₫ · ${esc(statusLabels[order.status] || order.status)}
+      <div>Người nhận: ${esc(order.recipient_name)} · ${esc(order.phone)}</div>
+      <div>Địa chỉ: ${esc(order.delivery_address)}</div>
+      ${order.delivery_note ? `<div>Ghi chú: ${esc(order.delivery_note)}</div>` : ""}
+      <ul>${order.items.map((item) => `<li>${esc(item.name)} ${esc(item.quantity || "")} · ${Number(item.price).toLocaleString("vi-VN")} ₫</li>`).join("")}</ul>
+      <div class="muted">${esc(order.created_at)}${order.paid_at ? ` · Thanh toán: ${esc(order.paid_at)}` : ""}</div>
+    </div>`).join("")}</div>` : '<div class="empty">Chưa có đơn nguyên liệu.</div>';
+  }
+};
+Pages._adminCommerceTab = async (tab) => {
+  document.querySelectorAll("#commerceTabs button").forEach((button) =>
+    button.classList.toggle("active", button.dataset.commerceTab === tab),
+  );
+  const el = document.getElementById("commerceDetail");
+  if (!el) return;
+  el.innerHTML = '<div class="empty">Đang tải...</div>';
+  try {
+    if (tab === "suppliers") {
+      const suppliers = await API.get("/admin/commerce/suppliers");
+      el.innerHTML = `<button class="btn small" onclick="Pages._adminAddSupplier()">＋ Nhà cung cấp</button>
+        <div class="panel" style="margin-top:12px">${suppliers.map((supplier) => `<div class="comment" style="display:flex;gap:12px;align-items:center">
+          <div style="flex:1"><b>${esc(supplier.name)}</b> · ${esc(supplier.code)}<div class="muted">${esc(supplier.provider_key)} · ${supplier.product_count} sản phẩm · ${supplier.is_active ? "Đang hoạt động" : "Đã tắt"}</div></div>
+          <button class="btn secondary small" onclick="Pages._adminToggleSupplier(${supplier.id},${!supplier.is_active})">${supplier.is_active ? "Tắt" : "Bật"}</button>
+        </div>`).join("")}</div>`;
+    } else if (tab === "products") {
+      const [products, suppliers] = await Promise.all([
+        API.get("/admin/commerce/products"),
+        API.get("/admin/commerce/suppliers"),
+      ]);
+      el.innerHTML = `<button class="btn small" onclick="Pages._adminAddCommerceProduct()">＋ Sản phẩm</button>
+        <table style="margin-top:12px"><tr><th>Sản phẩm / nhà cung cấp</th><th>SKU</th><th>Giá</th><th>Tồn / giữ / còn</th><th>Trạng thái</th><th></th></tr>
+        ${products.map((product) => `<tr><td>${esc(product.name)} · ${esc(product.unit)}<div class="muted">${esc(product.supplier_name)}</div></td>
+          <td>${esc(product.sku)}</td><td>${Number(product.price).toLocaleString("vi-VN")} ₫</td>
+          <td>${product.stock_on_hand} / ${product.reserved_quantity} / ${product.available_stock}</td><td>${product.is_active ? "Đang bán" : "Đã tắt"}</td>
+          <td><button class="btn secondary small" onclick="Pages._adminEditCommerceProduct(${product.id})">Sửa</button></td></tr>`).join("")}</table>`;
+      Pages._commerceAdminProducts = products;
+      Pages._commerceAdminSuppliers = suppliers;
+    } else if (tab === "orders") {
+      const orders = await API.get("/admin/commerce/orders");
+      el.innerHTML = orders.length ? `<div class="panel">${orders.map((order) => `<div class="comment">
+        <b>Đơn #${order.id}</b> · ${esc(order.username)} · ${Number(order.total_amount).toLocaleString("vi-VN")} ₫ · ${esc(order.status)}
+        <div>${esc(order.recipient_name)} · ${esc(order.phone)} · ${esc(order.delivery_address)}</div>
+        <ul>${order.items.map((item) => `<li>${esc(item.supplier_name)}: ${esc(item.product_name)} · ${item.quantity} ${esc(item.unit)} × ${Number(item.unit_price).toLocaleString("vi-VN")} ₫</li>`).join("")}</ul>
+        <div class="muted">Thanh toán ${esc(order.paid_provider || "-")} · Giao ${esc(order.shipment_provider || "-")} · ${esc(order.tracking_number || "Chưa có mã vận đơn")}</div>
+      </div>`).join("")}</div>` : '<div class="empty">Chưa có đơn hàng.</div>';
+    } else if (tab === "payments") {
+      const payments = await API.get("/admin/commerce/payments");
+      el.innerHTML = payments.length ? `<div class="panel">${payments.map((payment) => `<div class="comment">
+        <b>${payment.order_type === "recipe" ? "Công thức" : "Nguyên liệu"} · Đơn #${payment.order_id}</b> · ${esc(payment.username)}
+        <div>${esc(payment.provider)} · ${Number(payment.amount).toLocaleString("vi-VN")} ₫ · ${esc(payment.status)} · Ref ${esc(payment.reference)}</div>
+        <div class="muted">${esc(payment.created_at)} ${payment.transaction_ref ? `· ${esc(payment.transaction_ref)}` : ""}</div>
+        ${payment.status === "paid" ? `<button class="btn danger small" onclick="Pages._adminRefundPayment(${payment.id},'${payment.order_type}')">Hoàn tiền mô phỏng</button>` : ""}
+      </div>`).join("")}</div>` : '<div class="empty">Chưa có giao dịch.</div>';
+    } else if (tab === "shipments") {
+      const shipments = await API.get("/admin/commerce/shipments");
+      el.innerHTML = shipments.length ? `<div class="panel">${shipments.map((shipment) => `<div class="comment">
+        <b>Đơn #${shipment.order_id}</b> · ${esc(shipment.provider)} (mô phỏng) · ${esc(shipment.tracking_number)} · ${esc(shipment.status)}
+        <div>${esc(shipment.recipient_name)} · ${esc(shipment.phone)} · ${esc(shipment.delivery_address)}</div>
+        ${!["delivered", "returned", "cancelled"].includes(shipment.status) ? `<button class="btn small" onclick="Pages._adminAdvanceShipment(${shipment.id})">Chuyển trạng thái tiếp</button>
+          <button class="btn danger small" onclick="Pages._adminCancelShipment(${shipment.id})">Hủy vận đơn</button>` : ""}
+      </div>`).join("")}</div>` : '<div class="empty">Chưa có vận đơn.</div>';
+    } else if (tab === "wallet") {
+      const data = await API.get("/admin/commerce/commission");
+      el.innerHTML = `<div class="panel">
+        <h3>Cấu hình hoa hồng nền tảng</h3>
+        <p>Hiện tại: <b>${Number(data.commissionRateBps) / 100}%</b>. Tỷ lệ mới chỉ áp dụng cho đơn tạo sau khi lưu.</p>
+        <div style="display:flex;gap:8px;align-items:center"><input id="adminCommissionPercent" type="number" min="0" max="50" step="0.01" value="${Number(data.commissionRateBps) / 100}" style="width:160px"><span>%</span>
+          <button class="btn small" onclick="Pages._adminSaveCommission()">Lưu tỷ lệ</button></div>
+        <h3>Ví Creator và hoa hồng đã ghi nhận</h3>
+        <table><tr><th>Creator</th><th>Khả dụng</th><th>Đang giữ</th><th>Thu nhập ròng</th><th>Đã rút</th><th>Hoa hồng nền tảng</th></tr>
+          ${data.creators.map((creator) => `<tr><td>${esc(creator.username)}</td><td>${Number(creator.available_balance || 0).toLocaleString("vi-VN")} ₫</td><td>${Number(creator.held_balance || 0).toLocaleString("vi-VN")} ₫</td><td>${Number(creator.total_earned || 0).toLocaleString("vi-VN")} ₫</td><td>${Number(creator.total_withdrawn || 0).toLocaleString("vi-VN")} ₫</td><td>${Number(creator.platform_commission || 0).toLocaleString("vi-VN")} ₫</td></tr>`).join("")}</table>
+      </div>
+      <h3>Yêu cầu rút tiền (chi trả mô phỏng)</h3>
+      ${data.withdrawals.length ? `<div class="panel">${data.withdrawals.map((request) => `<div class="comment">
+        <b>#${request.id} · ${esc(request.username)}</b> · ${Number(request.amount).toLocaleString("vi-VN")} ₫ · ${esc(request.status)}
+        <div>${esc(request.bank_name)} · ${esc(request.bank_account)} · ${esc(request.account_name)}</div>
+        ${request.admin_note ? `<div class="muted">${esc(request.admin_note)}</div>` : ""}
+        ${request.status === "pending" ? `<button class="btn small" onclick="Pages._adminDecideWithdrawal(${request.id},'approve')">Duyệt chi trả giả lập</button>
+          <button class="btn danger small" onclick="Pages._adminDecideWithdrawal(${request.id},'reject')">Từ chối</button>` : ""}
+      </div>`).join("")}</div>` : '<div class="empty">Chưa có yêu cầu rút tiền.</div>'}
+      <h3>Sổ cái giao dịch và hoa hồng</h3>
+      ${data.ledger.length ? `<div class="panel">${data.ledger.map((entry) => `<div class="comment">${esc(entry.username)} · ${esc(entry.event_type)} · Gộp ${Number(entry.gross_amount).toLocaleString("vi-VN")} ₫ · Phí ${Number(entry.commission_amount).toLocaleString("vi-VN")} ₫ · Thực nhận ${Number(entry.net_amount).toLocaleString("vi-VN")} ₫ · ${Number(entry.commission_rate_bps) / 100}% · ${esc(entry.created_at)}</div>`).join("")}</div>` : '<div class="empty">Chưa có bút toán.</div>'}`;
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Không tải được dữ liệu: ${esc(e.message)}</div>`;
+  }
+};
+Pages._adminToggleSupplier = async (id, isActive) => {
+  try {
+    await API.put(`/admin/commerce/suppliers/${id}`, { is_active: isActive });
+    await Pages._adminCommerceTab("suppliers");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminAddSupplier = () => openModal(
+  "Thêm nhà cung cấp",
+  `<label>Mã định danh</label><input id="newSupplierCode" maxlength="40" style="width:100%">
+  <label>Tên nhà cung cấp</label><input id="newSupplierName" maxlength="150" style="width:100%">
+  <label>Provider key</label><input id="newSupplierProvider" maxlength="40" placeholder="Tên adapter tương lai" style="width:100%">
+  <button class="btn" style="margin-top:12px" onclick="Pages._saveNewSupplier()">Thêm</button>`,
+);
+Pages._saveNewSupplier = async () => {
+  try {
+    await API.post("/admin/commerce/suppliers", {
+      code: document.getElementById("newSupplierCode").value,
+      name: document.getElementById("newSupplierName").value,
+      provider_key: document.getElementById("newSupplierProvider").value,
+    });
+    document.getElementById("modal-ov")?.remove();
+    await Pages._adminCommerceTab("suppliers");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminAddCommerceProduct = () => {
+  const suppliers = Pages._commerceAdminSuppliers || [];
+  openModal(
+    "Thêm sản phẩm",
+    `<label>Nhà cung cấp</label><select id="newProductSupplier" style="width:100%">${suppliers.filter((s) => s.is_active).map((supplier) => `<option value="${supplier.id}">${esc(supplier.name)}</option>`).join("")}</select>
+    <label>SKU</label><input id="newProductSku" maxlength="80" style="width:100%">
+    <label>Tên</label><input id="newProductName" maxlength="150" style="width:100%">
+    <label>Đơn vị đóng gói</label><input id="newProductUnit" maxlength="50" style="width:100%">
+    <label>Giá</label><input id="newProductPrice" type="number" min="0" max="99999999" style="width:100%">
+    <label>Tồn kho</label><input id="newProductStock" type="number" min="0" max="1000000" style="width:100%">
+    <button class="btn" style="margin-top:12px" onclick="Pages._saveNewCommerceProduct()">Thêm</button>`,
+  );
+};
+Pages._saveNewCommerceProduct = async () => {
+  try {
+    await API.post("/admin/commerce/products", {
+      supplier_id: Number(document.getElementById("newProductSupplier").value),
+      sku: document.getElementById("newProductSku").value,
+      name: document.getElementById("newProductName").value,
+      unit: document.getElementById("newProductUnit").value,
+      price: Number(document.getElementById("newProductPrice").value),
+      stock_on_hand: Number(document.getElementById("newProductStock").value),
+    });
+    document.getElementById("modal-ov")?.remove();
+    await Pages._adminCommerceTab("products");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminEditCommerceProduct = (id) => {
+  const product = (Pages._commerceAdminProducts || []).find((item) => item.id === id);
+  if (!product) return toast("Không tìm thấy sản phẩm");
+  openModal(
+    "Cập nhật giá và tồn kho",
+    `<label>Tên</label><input id="editProductName" maxlength="150" value="${esc(product.name)}" style="width:100%">
+    <label>Đơn vị đóng gói</label><input id="editProductUnit" maxlength="50" value="${esc(product.unit)}" style="width:100%">
+    <label>Giá</label><input id="editProductPrice" type="number" min="0" max="99999999" value="${product.price}" style="width:100%">
+    <label>Tồn kho (đang giữ: ${product.reserved_quantity})</label><input id="editProductStock" type="number" min="${product.reserved_quantity}" max="1000000" value="${product.stock_on_hand}" style="width:100%">
+    <label><input id="editProductActive" type="checkbox" ${product.is_active ? "checked" : ""}> Đang bán</label>
+    <button class="btn" style="margin-top:12px" onclick="Pages._saveCommerceProduct(${id})">Lưu</button>`,
+  );
+};
+Pages._saveCommerceProduct = async (id) => {
+  try {
+    await API.put(`/admin/commerce/products/${id}`, {
+      name: document.getElementById("editProductName").value,
+      unit: document.getElementById("editProductUnit").value,
+      price: Number(document.getElementById("editProductPrice").value),
+      stock_on_hand: Number(document.getElementById("editProductStock").value),
+      is_active: document.getElementById("editProductActive").checked,
+    });
+    document.getElementById("modal-ov")?.remove();
+    await Pages._adminCommerceTab("products");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminRefundPayment = async (id, orderType) => {
+  if (!confirm("Xác nhận hoàn tiền mô phỏng? Việc này cập nhật trạng thái và số dư/kho, không chuyển tiền thật.")) return;
+  try {
+    await API.post(orderType === "recipe"
+      ? `/admin/commerce/recipe-payments/${id}/refund`
+      : `/admin/commerce/payments/${id}/refund`, {});
+    await Pages._adminCommerceTab("payments");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminAdvanceShipment = async (id) => {
+  try {
+    await API.post(`/admin/commerce/shipments/${id}/advance`, {});
+    await Pages._adminCommerceTab("shipments");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminCancelShipment = async (id) => {
+  if (!confirm("Hủy vận đơn mô phỏng này?")) return;
+  try {
+    await API.post(`/admin/commerce/shipments/${id}/cancel`, {});
+    await Pages._adminCommerceTab("shipments");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminSaveCommission = async () => {
+  try {
+    await API.put("/admin/commerce/commission", {
+      percent: Number(document.getElementById("adminCommissionPercent").value),
+    });
+    toast("Đã cập nhật tỷ lệ; tỷ lệ đơn cũ được giữ nguyên");
+    await Pages._adminCommerceTab("wallet");
+  } catch (e) { toast(e.message); }
+};
+Pages._adminDecideWithdrawal = async (id, decision) => {
+  const note = prompt(decision === "approve" ? "Ghi chú chi trả mô phỏng (không chuyển khoản thật):" : "Lý do từ chối:");
+  if (note === null) return;
+  try {
+    await API.post(`/admin/commerce/withdrawals/${id}/decision`, { decision, note });
+    await Pages._adminCommerceTab("wallet");
+  } catch (e) { toast(e.message); }
 };
 Pages._broadcast = async () => {
   const r = await API.post("/admin/broadcast", {
@@ -1393,7 +2196,7 @@ Pages._adminCreateUser = () => {
     <label>Email</label><input id="adminUserEmail" type="email" maxlength="150" style="width:100%">
     <label>Tên hiển thị</label><input id="adminUserDisplayName" maxlength="150" style="width:100%">
     <label>Mật khẩu tạm thời (ít nhất 8 ký tự)</label><input id="adminUserPassword" type="password" minlength="8" style="width:100%">
-    <label>Quyền</label><select id="adminUserRole" style="width:100%"><option value="user">Người dùng</option><option value="moderator">Điều hành viên</option><option value="admin">Quản trị viên</option></select>
+    <label>Quyền</label><select id="adminUserRole" style="width:100%"><option value="user">Người dùng</option><option value="creator">Creator</option><option value="moderator">Điều hành viên</option><option value="admin">Quản trị viên</option></select>
     <button class="btn" style="margin-top:12px" onclick="Pages._adminSaveNewUser()">Tạo tài khoản</button>`,
   );
 };
@@ -1424,6 +2227,7 @@ Pages._adminEditUser = (id) => {
     <label>Tên hiển thị</label><input id="adminUserDisplayName" maxlength="150" value="${esc(user.display_name || "")}" style="width:100%">
     <label>Quyền</label><select id="adminUserRole" style="width:100%">
       <option value="user" ${user.role === "user" ? "selected" : ""}>Người dùng</option>
+      <option value="creator" ${user.role === "creator" ? "selected" : ""}>Creator</option>
       <option value="moderator" ${user.role === "moderator" ? "selected" : ""}>Điều hành viên</option>
       <option value="admin" ${user.role === "admin" ? "selected" : ""}>Quản trị viên</option>
     </select>
@@ -1495,10 +2299,20 @@ Pages._adminSaveCategory = async (id) => {
 Pages._adminEditIngredient = async (id) => {
   const ingredient = (Pages._adminIngredients || []).find((item) => item.id === id);
   if (!ingredient) return toast("Không tìm thấy nguyên liệu");
-  const name = prompt("Tên nguyên liệu:", ingredient.name);
-  if (name === null) return;
+  openModal(
+    "Chỉnh sửa nguyên liệu",
+    `<label>Tên nguyên liệu</label><input id="adminIngredientName" maxlength="150" value="${esc(ingredient.name)}" style="width:100%">
+    <label>Giá theo dòng nguyên liệu (VNĐ)</label><input id="adminIngredientPrice" type="number" min="0" max="99999999" value="${Number(ingredient.unit_price || 0)}" style="width:100%">
+    <button class="btn" style="margin-top:12px" onclick="Pages._adminSaveIngredient(${ingredient.id})">Lưu thay đổi</button>`,
+  );
+};
+Pages._adminSaveIngredient = async (id) => {
   try {
-    await API.put(`/admin/ingredients/${ingredient.id}`, { name });
+    await API.put(`/admin/ingredients/${id}`, {
+      name: document.getElementById("adminIngredientName").value,
+      unit_price: Number(document.getElementById("adminIngredientPrice").value),
+    });
+    document.getElementById("modal-ov")?.remove();
     toast("Đã cập nhật nguyên liệu");
     await Pages._atab("catalog");
   } catch (e) {
@@ -1560,6 +2374,7 @@ Pages._addIng2 = async () => {
   try {
     await API.post("/admin/ingredients", {
       name: document.getElementById("niName").value,
+      unit_price: Number(document.getElementById("niPrice").value || 0),
     });
     toast("Đã thêm nguyên liệu");
     Pages._atab("catalog");

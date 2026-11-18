@@ -17,6 +17,7 @@ function recipeCard(r) {
       <div style="margin-top:8px"><span class="badge">${esc(r.category || "Khác")}</span>
       <span class="badge">${esc(r.difficulty)}</span>
       ${r.diet ? `<span class="badge">${esc(r.diet)}</span>` : ""}</div>
+      ${r.is_premium ? `<div class="badge" style="margin-top:8px">⭐ Premium · ${Number(r.price).toLocaleString("vi-VN")} ₫</div>` : ""}
     </div>
   </div>`;
 }
@@ -27,6 +28,8 @@ function renderNavbar() {
   const links = [
     ["/", "Trang chủ"],
     ["/search", "Tìm kiếm"],
+    ["/marketplace", "Premium"],
+    ["/ingredients", "Cửa hàng"],
     ["/community", "Cộng đồng"],
     ["/planner", "Meal Planner"],
     ["/shopping", "Shopping List"],
@@ -36,7 +39,14 @@ function renderNavbar() {
       ? [
           ["/favorites", "Yêu thích"],
           ["/profile", "Hồ sơ"],
+          ["/cart", "🛒 Giỏ hàng"],
+          ["/ingredient-cart", "🛍️ Thanh toán nguyên liệu"],
+          ["/purchases", "Đã mua"],
+          ["/orders", "Đơn & vận chuyển"],
         ]
+      : []),
+    ...(API.user
+      ? [["/creator", API.user.role === "creator" ? "Creator Studio" : "Trở thành Creator"]]
       : []),
     ...(API.user?.role === "admin"
       ? [["/admin", "Quản trị"]]

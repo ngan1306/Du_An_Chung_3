@@ -2,6 +2,7 @@
 const express = require('express');
 const { query, exec, get } = require('../db/database');
 const { authRequired, authOptional, log, notify } = require('../middleware');
+const { schemaReady: marketplaceSchemaReady } = require('./marketplace');
 
 const router = express.Router();
 const adminContact = Object.freeze({
@@ -136,6 +137,7 @@ router.get('/admin-contact', (_req, res) => res.json(adminContact));
 router.get('/:id', authOptional, async (req, res, next) => {
   if (isNaN(+req.params.id)) return next('route');
   try {
+    await marketplaceSchemaReady;
     const r = await get(`SELECT r.*, c.name AS category,
       ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) AS avg_rating,
       (SELECT COUNT(*) FROM ratings rt WHERE rt.recipe_id=r.id) AS rating_count,
@@ -145,11 +147,23 @@ router.get('/:id', authOptional, async (req, res, next) => {
       FROM recipes r
       LEFT JOIN categories c ON c.id=r.category_id
       LEFT JOIN users u ON u.id=r.user_id WHERE r.id=?`, req.params.id);
-    if (!r || (!r.is_public && (!req.user || req.user.id !== r.user_id)))
+    if (!r) return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y cÃ´ng thá»©c' });
+    const hasPurchase = req.user && await get(
+      'SELECT 1 x FROM purchased_recipes WHERE user_id=? AND recipe_id=?',
+      req.user.id, r.id,
+    );
+    if (!r.is_public && (!req.user || (req.user.id !== r.user_id && req.user.role !== 'admin' && !hasPurchase)))
       return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y cÃ´ng thá»©c' });
+    if (!r.approved && (!req.user || (req.user.id !== r.user_id && req.user.role !== 'admin' && !hasPurchase)))
+      return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y cÃ´ng thá»©c' });
+    const ownsPremium = !r.is_premium || (req.user && (
+      req.user.role === 'admin' ||
+      req.user.id === r.user_id ||
+      hasPurchase
+    ));
     const [ingredients, steps, isFavorite, ratings] = await Promise.all([
-      query('SELECT * FROM recipe_ingredients WHERE recipe_id=? ORDER BY id', r.id),
-      query('SELECT * FROM recipe_steps WHERE recipe_id=? ORDER BY step_order', r.id),
+      ownsPremium ? query('SELECT * FROM recipe_ingredients WHERE recipe_id=? ORDER BY id', r.id) : Promise.resolve([]),
+      ownsPremium ? query('SELECT * FROM recipe_steps WHERE recipe_id=? ORDER BY step_order', r.id) : Promise.resolve([]),
       req.user
         ? get('SELECT 1 x FROM favorites WHERE user_id=? AND recipe_id=?', req.user.id, r.id)
         : Promise.resolve(null),
@@ -165,6 +179,8 @@ router.get('/:id', authOptional, async (req, res, next) => {
     const data = mapRecipeCards([r])[0];
     data.ingredients = ingredients;
     data.steps = steps;
+    data.is_locked = !ownsPremium;
+    if (!ownsPremium) data.video_url = '';
     data.is_fav = !!isFavorite;
     data.ratings = ratings;
     res.json(data);
@@ -174,7 +190,14 @@ router.get('/:id', authOptional, async (req, res, next) => {
 // Them / sua cong thuc
 async function saveRecipe(req, res, existing) {
   try {
+    await marketplaceSchemaReady;
     const b = req.body;
+    const isPremium = b.is_premium === true;
+    const price = Number(b.price);
+    if (isPremium && req.user.role !== 'creator' && req.user.role !== 'admin')
+      return res.status(403).json({ error: 'Hãy đăng ký Creator trước khi đăng công thức Premium' });
+    if (isPremium && (!Number.isSafeInteger(price) || price < 5000 || price > 99999999))
+      return res.status(400).json({ error: 'Giá Premium phải từ 5.000 đến 99.999.999 VNĐ' });
     const fields = [b.title, b.description || '', b.image || '/img/food-placeholder.jpg', b.video_url || '',
       b.category_id || null, b.country || 'Viá»‡t Nam', +b.prep_minutes || 10, +b.cook_minutes || 20,
       +b.servings || 2, b.difficulty || 'Dá»…', +b.calories || 0, +b.protein || 0, +b.carbs || 0, +b.fat || 0,
@@ -184,13 +207,16 @@ async function saveRecipe(req, res, existing) {
       if (existing.user_id !== req.user.id && req.user.role !== 'admin')
         return res.status(403).json({ error: 'KhÃ´ng cÃ³ quyá»n sá»­a' });
       await exec(`UPDATE recipes SET title=?,description=?,image=?,video_url=?,category_id=?,country=?,
-      prep_minutes=?,cook_minutes=?,servings=?,difficulty=?,calories=?,protein=?,carbs=?,fat=?,diet=?,is_public=? WHERE id=?`,
-        [...fields, existing.id]);
+      prep_minutes=?,cook_minutes=?,servings=?,difficulty=?,calories=?,protein=?,carbs=?,fat=?,diet=?,is_public=?,
+      is_premium=?,price=?,approved=CASE WHEN ?=1 THEN 0 WHEN is_premium=1 THEN 1 ELSE approved END WHERE id=?`,
+        [...fields, isPremium ? 1 : 0, isPremium ? price : 0, isPremium ? 1 : 0, existing.id]);
       id = existing.id;
     } else {
       id = (await exec(`INSERT INTO recipes (user_id,title,description,image,video_url,category_id,country,
-      prep_minutes,cook_minutes,servings,difficulty,calories,protein,carbs,fat,diet,is_public)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [req.user.id, ...fields])).insertId;
+      prep_minutes,cook_minutes,servings,difficulty,calories,protein,carbs,fat,diet,is_public,is_premium,price,approved)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+        req.user.id, ...fields, isPremium ? 1 : 0, isPremium ? price : 0, isPremium ? 0 : 1,
+      ])).insertId;
     }
     await Promise.all([
       exec('DELETE FROM recipe_ingredients WHERE recipe_id=?', id),
@@ -235,9 +261,12 @@ router.put('/:id', authRequired, async (req, res) => {
 
 router.delete('/:id', authRequired, async (req, res) => {
   try {
+    await marketplaceSchemaReady;
     const r = await get('SELECT * FROM recipes WHERE id=?', req.params.id);
     if (!r) return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y' });
     if (r.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'KhÃ´ng cÃ³ quyá»n xÃ³a' });
+    if (await get('SELECT 1 x FROM marketplace_order_items WHERE recipe_id=?', r.id))
+      return res.status(409).json({ error: 'Không thể xóa công thức đã có đơn hàng để bảo toàn quyền sở hữu và lịch sử giao dịch' });
     await exec('DELETE FROM recipes WHERE id=?', r.id);
     log(req.user.id, 'delete_recipe', `recipe #${r.id}`);
     res.json({ ok: true });
@@ -354,6 +383,13 @@ router.get('/collections/share/:token', async (req, res) => {
 router.post('/:id/rate', authRequired, async (req, res, next) => {
   if (isNaN(+req.params.id)) return next('route');
   try {
+    await marketplaceSchemaReady;
+    const recipe = await get('SELECT is_premium FROM recipes WHERE id=?', req.params.id);
+    if (!recipe) return res.status(404).json({ error: 'Không tìm thấy công thức' });
+    if (recipe.is_premium && !await get(
+      'SELECT 1 x FROM purchased_recipes WHERE user_id=? AND recipe_id=?',
+      req.user.id, req.params.id,
+    )) return res.status(403).json({ error: 'Bạn cần sở hữu công thức Premium để đánh giá' });
     const stars = Number(req.body.stars);
     if (!Number.isInteger(stars) || stars < 1 || stars > 5)
       return res.status(400).json({ error: 'Số sao phải là số nguyên từ 1 đến 5' });
@@ -481,15 +517,43 @@ router.post('/posts/:id/like', authRequired, async (req, res) => {
 });
 
 // ---- Meal Planner ----
+router.get('/mealplan/recipes', authRequired, async (req, res) => {
+  await marketplaceSchemaReady;
+  const search = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+  let where = `WHERE r.is_public=1 AND r.approved=1
+    AND (r.is_premium=0 OR r.user_id=? OR ?='admin'
+      OR EXISTS (SELECT 1 FROM purchased_recipes p WHERE p.user_id=? AND p.recipe_id=r.id))`;
+  const params = [req.user.id, req.user.role, req.user.id];
+  if (search) {
+    where += ` AND (r.title LIKE ? OR r.description LIKE ?
+      OR EXISTS (SELECT 1 FROM recipe_ingredients ri WHERE ri.recipe_id=r.id AND ri.name LIKE ?))`;
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  res.json(mapRecipeCards(await query(
+    `${recipeCardsSql} ${where} ORDER BY r.views DESC OFFSET 0 ROWS FETCH NEXT 30 ROWS ONLY`,
+    params,
+  )));
+});
 router.get('/mealplan', authRequired, async (req, res) => {
   const { start, end } = req.query;
   res.json(await query(
-    `SELECT mp.*, r.title, r.image, r.calories FROM meal_plans mp
+    `SELECT mp.*, r.title, r.image, r.calories, r.protein, r.carbs, r.fat FROM meal_plans mp
     JOIN recipes r ON r.id=mp.recipe_id WHERE mp.user_id=? AND mp.date BETWEEN ? AND ? ORDER BY mp.date, mp.slot`,
     req.user.id, start, end));
 });
 router.post('/mealplan', authRequired, async (req, res) => {
   const { date, slot, recipe_id } = req.body;
+  await marketplaceSchemaReady;
+  const recipe = await get(
+    'SELECT id,user_id,is_public,approved,is_premium FROM recipes WHERE id=?',
+    recipe_id,
+  );
+  if (!recipe || !recipe.is_public || !recipe.approved)
+    return res.status(404).json({ error: 'Không tìm thấy công thức công khai' });
+  if (recipe.is_premium && recipe.user_id !== req.user.id && req.user.role !== 'admin' && !await get(
+    'SELECT 1 x FROM purchased_recipes WHERE user_id=? AND recipe_id=?',
+    req.user.id, recipe.id,
+  )) return res.status(403).json({ error: 'Bạn cần sở hữu công thức Premium để thêm vào thực đơn' });
   const ex = await get('SELECT id FROM meal_plans WHERE user_id=? AND date=? AND slot=?', req.user.id, date, slot);
   if (ex) await exec('UPDATE meal_plans SET recipe_id=?, done=0 WHERE id=?', recipe_id, ex.id);
   else await exec('INSERT INTO meal_plans (user_id,date,slot,recipe_id) VALUES (?,?,?,?)', req.user.id, date, slot, recipe_id);
@@ -507,13 +571,26 @@ router.post('/mealplan/:id/done', authRequired, async (req, res) => {
 });
 
 // ---- Shopping list ----
-router.get('/shopping', authRequired, async (req, res) =>
-  res.json(await query('SELECT * FROM shopping_items WHERE user_id=? ORDER BY bought, id', req.user.id)));
+router.get('/shopping', authRequired, async (req, res) => {
+  await marketplaceSchemaReady;
+  res.json(await query(`
+    SELECT s.*,ISNULL(i.unit_price,0) AS unit_price
+    FROM shopping_items s LEFT JOIN ingredients i ON i.name=s.name
+    WHERE s.user_id=? ORDER BY s.bought,s.id
+  `, req.user.id));
+});
 router.post('/shopping', authRequired, async (req, res) => {
   await exec('INSERT INTO shopping_items (user_id,name,quantity) VALUES (?,?,?)', req.user.id, req.body.name, req.body.quantity || '');
   res.json({ ok: true });
 });
 router.post('/shopping/from-recipe/:rid', authRequired, async (req, res) => {
+  await marketplaceSchemaReady;
+  const recipe = await get('SELECT is_premium,user_id FROM recipes WHERE id=?', req.params.rid);
+  if (!recipe) return res.status(404).json({ error: 'Không tìm thấy công thức' });
+  if (recipe.is_premium && recipe.user_id !== req.user.id && req.user.role !== 'admin' && !await get(
+    'SELECT 1 x FROM purchased_recipes WHERE user_id=? AND recipe_id=?',
+    req.user.id, req.params.rid,
+  )) return res.status(403).json({ error: 'Bạn cần sở hữu công thức Premium để xem nguyên liệu' });
   const inserted = await query(`WITH ingredients AS (
     SELECT name, quantity, unit,
       ROW_NUMBER() OVER (PARTITION BY name ORDER BY id) AS row_num

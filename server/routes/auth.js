@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const { query, exec, get } = require("../db/database");
 const { sign, authRequired, log } = require("../middleware");
+const { schemaReady: marketplaceSchemaReady } = require("./marketplace");
 
 const router = express.Router();
 
@@ -130,6 +131,14 @@ router.put("/profile", authRequired, async (req, res) => {
 
 router.delete("/me", authRequired, async (req, res) => {
   try {
+    await marketplaceSchemaReady;
+    if (await get(
+      `SELECT 1 x FROM marketplace_orders WHERE user_id=?
+       UNION ALL SELECT 1 x FROM marketplace_order_items WHERE creator_id=?`,
+      req.user.id, req.user.id,
+    )) return res.status(409).json({ error: "Không thể xóa tài khoản có lịch sử mua hoặc bán trên Marketplace" });
+    await exec("DELETE FROM marketplace_cart_items WHERE user_id=?", req.user.id);
+    await exec("DELETE FROM creator_profiles WHERE user_id=?", req.user.id);
     await exec("DELETE FROM users WHERE id=?", [req.user.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -33,6 +33,8 @@ app.post("/api/upload", (req, res) => {
 
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/recipes", require("./routes/recipes"));
+app.use("/api/marketplace", require("./routes/marketplace"));
+app.use("/api/commerce", require("./routes/commerce"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/ai", require("./routes/ai"));
 
