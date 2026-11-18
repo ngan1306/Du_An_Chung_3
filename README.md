@@ -89,7 +89,7 @@ Xem dữ liệu trong SSMS: kết nối `DESKTOP-UQULP3N\SQLEXPRESS` → databas
 - **Yêu thích**: thêm/bỏ yêu thích, bộ sưu tập (tạo, tìm và chọn công thức để thêm, chia sẻ qua link token), lịch sử công thức đã xem.
 - **Đánh giá & bình luận**: 1–5 sao, bình luận, trả lời, thích bình luận, đăng ảnh món đã nấu, báo cáo vi phạm.
 - **Cộng đồng**: theo dõi/hủy theo dõi, trang cá nhân đầu bếp, đăng bài + ảnh, thích bài viết, feed từ người đang theo dõi, đính kèm công thức.
-- **Meal Planner**: kế hoạch theo tuần, sáng/trưa/tối, chọn công thức, đánh dấu hoàn thành, tổng hợp dinh dưỡng.
+- **Meal Planner**: kế hoạch theo tuần, sáng/trưa/tối, chọn/tìm công thức, chỉnh sửa hoặc xóa món đã chọn, theo dõi dinh dưỡng.
 - **Shopping List**: tạo tự động từ công thức (toàn bộ hoặc chỉ phần thiếu với AI), thêm/sửa/xóa, đánh dấu đã mua. Cửa hàng nguyên liệu và Marketplace Premium có luồng thanh toán/vận chuyển giả lập riêng.
 - **AI Recipe**: gợi ý món từ nguyên liệu có sẵn (chấm điểm khớp nguyên liệu), thực đơn theo khẩu vị/calo/thời gian, đề xuất nguyên liệu còn thiếu.
 - **Cooking Mode**: hướng dẫn từng bước, đánh dấu hoàn thành, đồng hồ đếm ngược, phóng to chữ.

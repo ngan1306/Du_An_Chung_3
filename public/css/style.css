@@ -558,14 +558,34 @@ th {
   min-height: 110px;
 }
 .meal-row {
-  font-size: 11px;
   background: #fff4ec;
   border-radius: 6px;
-  padding: 3px 6px;
+  padding: 5px 6px;
   margin-top: 4px;
-  cursor: pointer;
+  display: grid;
+  gap: 5px;
 }
-.meal-row.done {
-  text-decoration: line-through;
-  opacity: 0.6;
+.meal-title {
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.meal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.meal-actions .btn {
+  padding: 3px 6px;
+  font-size: 10px;
+}
+.meal-add {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }

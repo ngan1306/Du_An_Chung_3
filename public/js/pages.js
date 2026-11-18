@@ -1465,7 +1465,7 @@ Pages.planner = async () => {
       : `${Number(value).toLocaleString("vi-VN")} ${unit}`;
   app().innerHTML = `
     <h2 class="section">📅 Meal Planner — Kế hoạch tuần này</h2>
-    <p class="muted">Bấm vào ô trống của một bữa để chọn công thức. Bấm vào món đã chọn để đánh dấu hoàn thành.</p>
+    <p class="muted">Chọn món ở bữa trống; dùng Chỉnh sửa để đổi món hoặc Xóa để bỏ món khỏi thực đơn.</p>
     <div class="week-grid">
     ${days
       .map(
@@ -1474,8 +1474,12 @@ Pages.planner = async () => {
         ${slots
           .map((slot) => {
             const p = planBySlot.get(`${d}:${slot}`);
-            return `<div class="meal-row ${p && p.done ? "done" : ""}" ${p ? `onclick="Pages._toggleDone(${p.id})"` : `onclick="Pages._pickMeal('${d}','${slot}')"`}>
-              ${slot === "sang" ? "🌅 Sáng: " : slot === "trua" ? "☀️ Trưa: " : "🌙 Tối: "}${p ? esc(p.title) : "+ chọn món"}
+            return `<div class="meal-row">
+              <div class="meal-title">${slot === "sang" ? "🌅" : slot === "trua" ? "☀️" : "🌙"} ${slotNames[slot]}: ${p ? esc(p.title) : ""}</div>
+              ${p ? `<div class="meal-actions">
+                <button type="button" class="btn secondary small" onclick="Pages._pickMeal('${d}','${slot}',true)">Chỉnh sửa</button>
+                <button type="button" class="btn danger small" onclick="Pages._deleteMeal('${d}','${slot}')">Xóa</button>
+              </div>` : `<button type="button" class="meal-add" onclick="Pages._pickMeal('${d}','${slot}')">+ chọn món</button>`}
             </div>`;
           })
           .join("")}
@@ -1485,7 +1489,7 @@ Pages.planner = async () => {
     </div>
     <div class="panel" style="margin-top:18px">
       <h3>🥗 Theo dõi dinh dưỡng tuần</h3>
-      <p>Đã lập <b>${plans.length}</b> bữa · Hoàn thành <b>${plans.filter((p) => p.done).length}</b> bữa · Tổng ~<b>${sumNutrition("calories").toLocaleString("vi-VN")}</b> kcal theo khẩu phần đã lên kế hoạch</p>
+      <p>Đã lập <b>${plans.length}</b> bữa · Tổng ~<b>${sumNutrition("calories").toLocaleString("vi-VN")}</b> kcal theo khẩu phần đã lên kế hoạch</p>
       <p>Protein: <b>${sumNutrition("protein").toLocaleString("vi-VN")} g</b> · Carb: <b>${sumNutrition("carbs").toLocaleString("vi-VN")} g</b> · Fat: <b>${sumNutrition("fat").toLocaleString("vi-VN")} g</b></p>
       <p class="muted">Chi tiết dưới đây dựa trên thông tin dinh dưỡng mỗi khẩu phần của công thức.</p>
       ${mealDetails.length ? `<div style="display:grid;gap:8px;margin-top:12px">
@@ -1496,11 +1500,11 @@ Pages.planner = async () => {
       </div>` : '<p class="muted">Chưa có món nào trong tuần này. Hãy chọn món trong một ô bữa ăn để xem kế hoạch và dinh dưỡng tại đây.</p>'}
     </div>`;
 };
-Pages._pickMeal = async (date, slot) => {
+Pages._pickMeal = async (date, slot, editing = false) => {
   try {
     const items = await API.get("/recipes/mealplan/recipes");
     openModal(
-      `Chọn món cho bữa ${slot} ngày ${date}`,
+      `${editing ? "Chỉnh sửa món" : "Chọn món"} cho bữa ${slot} ngày ${date}`,
       `<label for="mealRecipeSearch">Tìm món theo tên hoặc nguyên liệu</label>
       <input id="mealRecipeSearch" type="search" maxlength="100" placeholder="Ví dụ: phở, gà..." style="width:100%;margin-bottom:12px"
         oninput="Pages._searchMealRecipes('${date}','${slot}')">
@@ -1536,12 +1540,17 @@ Pages._setMeal = async (date, slot, rid) => {
   try {
     await API.post("/recipes/mealplan", { date, slot, recipe_id: rid });
     document.getElementById("modal-ov")?.remove();
+    toast("Đã lưu món vào thực đơn");
     Pages.planner();
   } catch (e) { toast(e.message); }
 };
-Pages._toggleDone = async (id) => {
-  await API.post(`/recipes/mealplan/${id}/done`);
-  Pages.planner();
+Pages._deleteMeal = async (date, slot) => {
+  if (!confirm("Xóa món này khỏi thực đơn?")) return;
+  try {
+    await API.del(`/recipes/mealplan?date=${encodeURIComponent(date)}&slot=${encodeURIComponent(slot)}`);
+    toast("Đã xóa món khỏi thực đơn");
+    Pages.planner();
+  } catch (e) { toast(e.message); }
 };
 
 /* ---------- Shopping List ---------- */
