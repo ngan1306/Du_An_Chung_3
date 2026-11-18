@@ -1545,10 +1545,10 @@ Pages._setMeal = async (date, slot, rid) => {
   } catch (e) { toast(e.message); }
 };
 Pages._deleteMeal = async (date, slot) => {
-  if (!confirm("Xóa món này khỏi thực đơn?")) return;
+  if (!confirm("Xóa bữa này khỏi kế hoạch tuần? Công thức vẫn được giữ nguyên.")) return;
   try {
     await API.del(`/recipes/mealplan?date=${encodeURIComponent(date)}&slot=${encodeURIComponent(slot)}`);
-    toast("Đã xóa món khỏi thực đơn");
+    toast("Đã xóa bữa khỏi kế hoạch tuần");
     Pages.planner();
   } catch (e) { toast(e.message); }
 };

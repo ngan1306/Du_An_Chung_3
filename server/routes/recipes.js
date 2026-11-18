@@ -259,10 +259,12 @@ router.put('/:id', authRequired, async (req, res) => {
   saveRecipe(req, res, existing);
 });
 
-router.delete('/:id', authRequired, async (req, res) => {
+router.delete('/:id', authRequired, async (req, res, next) => {
+  const recipeId = Number(req.params.id);
+  if (!Number.isInteger(recipeId) || recipeId < 1) return next('route');
   try {
     await marketplaceSchemaReady;
-    const r = await get('SELECT * FROM recipes WHERE id=?', req.params.id);
+    const r = await get('SELECT * FROM recipes WHERE id=?', recipeId);
     if (!r) return res.status(404).json({ error: 'KhÃ´ng tÃ¬m tháº¥y' });
     if (r.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'KhÃ´ng cÃ³ quyá»n xÃ³a' });
     if (await get('SELECT 1 x FROM marketplace_order_items WHERE recipe_id=?', r.id))
