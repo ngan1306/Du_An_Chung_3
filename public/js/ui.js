@@ -43,6 +43,7 @@ function renderNavbar() {
           ["/ingredient-cart", "🛍️ Thanh toán nguyên liệu"],
           ["/purchases", "Đã mua"],
           ["/orders", "Đơn & vận chuyển"],
+          ["/recipe-orders", "Đơn mua công thức"],
         ]
       : []),
     ...(API.user

@@ -16,6 +16,7 @@ const aw = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(n
 
 const recipeCardsSql = `SELECT r.id, r.title, r.image, r.views, r.prep_minutes,
   r.cook_minutes, r.difficulty, r.diet, r.category_id, r.country,
+  r.is_premium, r.price,
   c.name AS category,
   ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) AS avg_rating,
   (SELECT COUNT(*) FROM ratings rt WHERE rt.recipe_id=r.id) AS rating_count,
@@ -192,8 +193,8 @@ async function saveRecipe(req, res, existing) {
   try {
     await marketplaceSchemaReady;
     const b = req.body;
-    const isPremium = b.is_premium === true;
-    const price = Number(b.price);
+    const price = Number(b.price ?? 0);
+    const isPremium = b.is_premium === true || price !== 0;
     if (isPremium && req.user.role !== 'creator' && req.user.role !== 'admin')
       return res.status(403).json({ error: 'Hãy đăng ký Creator trước khi đăng công thức Premium' });
     if (isPremium && (!Number.isSafeInteger(price) || price < 5000 || price > 99999999))

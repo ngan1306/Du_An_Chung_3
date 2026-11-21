@@ -6,14 +6,20 @@ const { DB_CONFIG } = require('./config');
 const CONN = `Server=${DB_CONFIG.server};Database=${DB_CONFIG.database};Trusted_Connection=Yes;Driver=${DB_CONFIG.driver};`;
 
 // hang doi ket noi: moi query mo 1 connection moi va dong ngay -> tranh treo
+// retry 1 lan khi ODBC ban qua tay (login timeout / transient) va nang timeout len 30s
 function odbcQuery(sqlText, params) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Query timeout: ' + sqlText.slice(0, 80))), 15000);
+  const runOnce = () => new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Query timeout: ' + sqlText.slice(0, 80))), 30000);
     odbc.query(CONN, sqlText, params || [], (err, result) => {
       clearTimeout(timeout);
       if (err) return reject(err);
       resolve(result);
     });
+  });
+  return runOnce().catch((err) => {
+    const msg = String(err && err.message || err);
+    if (/timeout|busy|deadlock|connection reset|connection is closed/i.test(msg)) return runOnce();
+    throw err;
   });
 }
 

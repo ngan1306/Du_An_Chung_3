@@ -22,12 +22,29 @@ const API = {
     if (!res.ok) throw new Error(data.error || "Lỗi máy chủ");
     return data;
   },
-  get: (url) => API.req(url),
-  post: (url, body) =>
-    API.req(url, { method: "POST", body: JSON.stringify(body || {}) }),
-  put: (url, body) =>
-    API.req(url, { method: "PUT", body: JSON.stringify(body || {}) }),
-  del: (url) => API.req(url, { method: "DELETE" }),
+  // cache GET trong 30 giay giua cac trang -> chuyen trang nhan hon, giam truy van lap
+  _cache: new Map(),
+  async get(url) {
+    const now = Date.now();
+    const hit = this._cache.get(url);
+    if (hit && now - hit.at < 30000) return hit.data;
+    const data = await this.req(url);
+    this._cache.set(url, { data, at: now });
+    if (this._cache.size > 100) this._cache.delete(this._cache.keys().next().value);
+    return data;
+  },
+  post(url, body) {
+    this._cache.clear(); // du lieu thay doi -> bo cache
+    return this.req(url, { method: "POST", body: JSON.stringify(body || {}) });
+  },
+  put(url, body) {
+    this._cache.clear();
+    return this.req(url, { method: "PUT", body: JSON.stringify(body || {}) });
+  },
+  del(url) {
+    this._cache.clear();
+    return this.req(url, { method: "DELETE" });
+  },
 
   save(token, user) {
     this.token = token;

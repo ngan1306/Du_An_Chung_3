@@ -709,14 +709,46 @@ router.get("/vnpay/ipn", wrap(async (req, res) => {
   }
 }));
 
+router.get("/recipe-orders", authRequired, wrap(async (req, res) => {
+  const orders = await query(`
+    SELECT o.id,o.user_id,o.total_amount,o.status AS order_status,o.created_at,o.paid_at,
+      p.provider AS payment_provider,p.status AS payment_status,p.txn_ref AS payment_reference,
+      p.provider_txn_no AS payment_txn_no
+    FROM marketplace_orders o
+    LEFT JOIN marketplace_payments p ON p.order_id=o.id
+    WHERE o.user_id=? ORDER BY o.created_at DESC
+  `, req.user.id);
+  for (const order of orders) {
+    order.items = await query(`
+      SELECT oi.recipe_id AS id, r.title AS name, r.image, oi.price AS unit_price,
+        oi.price AS line_total, u.username AS creator_name,
+        oi.commission_amount, oi.creator_amount,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM purchased_recipes pr WHERE pr.user_id=o.user_id AND pr.recipe_id=oi.recipe_id
+        ) THEN 1 ELSE 0 END AS unlocked
+      FROM marketplace_order_items oi
+      JOIN recipes r ON r.id=oi.recipe_id
+      JOIN users u ON u.id=oi.creator_id
+      JOIN marketplace_orders o ON o.id=oi.order_id
+      WHERE oi.order_id=? ORDER BY oi.id
+    `, order.id);
+    order.unlocked = order.items.filter((item) => item.unlocked).map((item) => item.id);
+  }
+  res.json(orders);
+}));
+
 router.get("/purchases", authRequired, wrap(async (req, res) => {
   res.json(await query(`
-    SELECT p.recipe_id,r.title,r.image,p.order_id,p.purchased_at,oi.price,
-      u.username AS creator_username
+    SELECT p.recipe_id AS id,r.title,r.image,p.order_id,p.purchased_at,oi.price,
+      u.username AS creator_username,
+      o.status AS order_status,
+      pay.provider AS payment_provider, pay.status AS payment_status, pay.paid_at
     FROM purchased_recipes p
     JOIN recipes r ON r.id=p.recipe_id
     JOIN marketplace_order_items oi ON oi.order_id=p.order_id AND oi.recipe_id=p.recipe_id
     JOIN users u ON u.id=oi.creator_id
+    JOIN marketplace_orders o ON o.id=p.order_id
+    LEFT JOIN marketplace_payments pay ON pay.order_id=p.order_id
     WHERE p.user_id=? ORDER BY p.purchased_at DESC
   `, req.user.id));
 }));

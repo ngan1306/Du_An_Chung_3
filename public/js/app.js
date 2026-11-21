@@ -8,6 +8,7 @@ const routes = {
   "/ingredients": (q) => Pages.ingredientsStore(q),
   "/ingredient-cart": () => Pages.ingredientCart(),
   "/orders": () => Pages.commerceOrders(),
+  "/recipe-orders": () => Pages.recipeOrders(),
   "/mock-payment": (q, m) => Pages.mockPayment(m),
   "/cart": () => Pages.cart(),
   "/purchases": (q) => Pages.purchases(q),

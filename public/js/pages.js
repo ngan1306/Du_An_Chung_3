@@ -387,6 +387,7 @@ Pages.commerceOrders = async () => {
   };
   app().innerHTML = `<h2 class="section">📦 Đơn nguyên liệu</h2>
     <p class="muted">Theo dõi thanh toán, đơn vị giao hàng, mã vận đơn và trạng thái giao hàng. Tất cả đều mô phỏng; không có giao dịch/vận đơn thật.</p>
+    <p><button class="btn secondary small" onclick="go('/recipe-orders')">📚 Xem đơn mua công thức</button></p>
     ${orders.length ? orders.map((order) => `<div class="panel" style="margin:12px 0">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <b>Đơn #${order.id} · ${esc(labels[order.status] || order.status)}</b>
@@ -399,6 +400,42 @@ Pages.commerceOrders = async () => {
       <ul>${order.items.map((item) => `<li>${esc(item.name)} · ${item.quantity} ${esc(item.unit)} × ${Number(item.unit_price).toLocaleString("vi-VN")} ₫ = ${Number(item.line_total).toLocaleString("vi-VN")} ₫</li>`).join("")}</ul>
       ${order.shipment_events.length ? `<ol>${order.shipment_events.map((event) => `<li>${esc(event.description)} · ${esc(event.created_at)}</li>`).join("")}</ol>` : ""}
     </div>`).join("") : '<div class="empty">Bạn chưa có đơn hàng.</div>'}`;
+};
+
+Pages.recipeOrders = async () => {
+  if (!API.user) return Pages.login();
+  const orders = await API.get("/marketplace/recipe-orders");
+  const labels = {
+    pending: "Chờ thanh toán",
+    paid: "Đã thanh toán",
+    failed: "Thanh toán thất bại",
+  };
+  const payLabel = { paid: "Đã thanh toán", failed: "Thất bại", pending: "Đang xử lý" };
+  app().innerHTML = `<h2 class="section">📚 Đơn mua công thức</h2>
+    <p class="muted">Theo dõi đơn mua công thức Premium, cổng thanh toán và trạng thái mở khóa nội dung.</p>
+    <p><button class="btn secondary small" onclick="go('/orders')">📦 Xem đơn nguyên liệu</button> <button class="btn secondary small" onclick="go('/purchases')">📚 Công thức đã mua</button></p>
+    ${orders.length ? orders.map((order) => `<div class="panel" style="margin:12px 0">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <b>Đơn #${order.id} · ${esc(labels[order.order_status] || order.order_status)}</b>
+        <b>${Number(order.total_amount).toLocaleString("vi-VN")} ₫</b>
+      </div>
+      <div class="muted">Thanh toán: ${esc(String(order.payment_provider || "vnpay").toUpperCase())} · Trạng thái: ${esc(payLabel[order.payment_status] || order.payment_status || "Chưa có")}${order.payment_txn_no ? ` · Mã GD: ${esc(order.payment_txn_no)}` : ""}</div>
+      <div class="muted">Ngày tạo: ${esc(String(order.created_at || "").replace("T", " ").slice(0, 19))}${order.paid_at ? ` · Đã trả: ${esc(String(order.paid_at).replace("T", " ").slice(0, 19))}` : ""}</div>
+      <ul>${order.items.map((item) => `<li>
+        <a href="#/recipe/${item.id}" style="font-weight:600">${esc(item.name)}</a>
+        · Creator: ${esc(item.creator_name)}
+        · Giá: ${Number(item.unit_price).toLocaleString("vi-VN")} ₫
+        ${order.unlocked.includes(item.id) ? '<span class="badge" style="background:#e6f7ec;color:#1a7f37">🔓 Đã mở khóa</span>' : '<span class="badge" style="background:#fff3cd;color:#8a6d00">🔒 Chưa mở khóa</span>'}
+      </li>`).join("")}</ul>
+      ${order.order_status === "paid"
+        ? order.items.every((item) => order.unlocked.includes(item.id))
+          ? '<p style="margin:8px 0 0;color:#1a7f37">✅ Tất cả công thức trong đơn đã được mở khóa trong mục Đã mua.</p>'
+          : `<p class="muted" style="margin:8px 0 0">Một số công thức chưa mở khóa; hãy tải lại trang Đã mua sau ít phút.</p>`
+        : order.order_status === "pending"
+          ? '<p class="muted" style="margin:8px 0 0">⏳ Đơn chưa được thanh toán; hãy hoàn tất trong giỏ hàng nếu cần.</p>'
+          : '<p class="muted" style="margin:8px 0 0">❌ Đơn thất bại; bạn có thể đặt lại đơn mới từ giỏ hàng.</p>'}
+      <div style="margin-top:10px"><button class="btn secondary small" onclick="go('/purchases')">📚 Xem công thức đã mua</button></div>
+    </div>`).join("") : '<div class="empty">Bạn chưa có đơn mua công thức nào. Thêm công thức Premium vào <a href="#/cart">giỏ hàng</a> để mua.</div>'}`;
 };
 
 Pages.cart = async () => {
@@ -456,13 +493,40 @@ Pages.purchases = async (query) => {
     pending: "VNPay đã trả về kết quả. Hệ thống đang chờ IPN xác nhận từ máy chủ thanh toán; hãy tải lại sau ít phút.",
     invalid: query?.message || "Không xác minh được giao dịch.",
   }[query?.payment];
+  const statusBadge = (orderStatus, paymentStatus) => {
+    const paid = orderStatus === "paid" && paymentStatus === "paid";
+    return paid
+      ? '<span class="badge" style="background:#e6f7ec;color:#1a7f37">✅ Đã thanh toán</span>'
+      : '<span class="badge" style="background:#fff3cd;color:#8a6d00">⏳ Chờ xác nhận</span>';
+  };
+  const fmtDate = (d) => {
+    try { return new Date(d).toLocaleString("vi-VN", { hour12: false }); } catch { return esc(d); }
+  };
   app().innerHTML = `
     <h2 class="section">📚 Công thức đã mua</h2>
     ${paymentMessage ? `<div class="panel">${esc(paymentMessage)}</div>` : ""}
-    ${items.length ? `<div class="grid">${items.map((item) => recipeCard({
-      ...item, is_premium: true, views: 0, prep_minutes: 0, cook_minutes: 0,
-      avg_rating: 0, rating_count: 0, difficulty: "Đã sở hữu",
-    })).join("")}</div>` : '<div class="empty">Bạn chưa mua công thức nào.</div>'}`;
+    ${items.length ? items.map((item) => `<div class="panel" style="margin:12px 0">
+      <div style="display:flex;gap:14px;flex-wrap:wrap">
+        <img src="${esc(item.image)}" alt="" style="width:96px;height:96px;object-fit:cover;border-radius:10px;cursor:pointer" onclick="go('/recipe/${item.id}')">
+        <div style="flex:1;min-width:240px">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <b style="cursor:pointer;font-size:1.05em" onclick="go('/recipe/${item.id}')">${esc(item.title)}</b>
+            ${statusBadge(item.order_status, item.payment_status)}
+          </div>
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:6px 0">
+            <span class="muted">Đơn #${item.order_id}</span>
+            <b style="color:#1a7f37">${Number(item.price).toLocaleString("vi-VN")} ₫</b>
+          </div>
+          <div class="muted" style="margin:4px 0">👤 Bán bởi: ${esc(item.creator_username)}</div>
+          <div class="muted" style="margin:4px 0">💳 Thanh toán: ${esc(String(item.payment_provider || "vnpay").toUpperCase())}</div>
+          <div class="muted" style="margin:4px 0">🕐 Ngày mua: ${fmtDate(item.purchased_at)}</div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn small" onclick="go('/recipe/${item.id}')">📖 Xem công thức</button>
+            <button class="btn secondary small" onclick="go('/recipe/${item.id}')">👨‍🍳 Nấu ngay</button>
+          </div>
+        </div>
+      </div>
+    </div>`).join("") : '<div class="empty">Bạn chưa mua công thức nào.</div>'}`;
 };
 
 Pages.creator = async () => {
@@ -574,9 +638,8 @@ Pages.recipe = async (m) => {
       <h1>${esc(r.title)}</h1>
       <p class="muted">${esc(r.description)}</p>
       ${r.is_premium ? `<div class="badge" style="margin:8px 0">⭐ Premium · ${Number(r.price).toLocaleString("vi-VN")} ₫</div>` : ""}
-      ${r.is_locked ? `<div class="panel"><b>🔒 Công thức Premium</b><p style="margin:6px 0 12px">Mua công thức để mở khóa nguyên liệu và toàn bộ hướng dẫn.</p>
-        ${API.user ? `<button class="btn" onclick="Pages._buyPremium(${r.id})">🛒 Mua công thức</button>
-          <button class="btn secondary" style="margin-left:6px" onclick="Pages._addPremiumToCart(${r.id})">Thêm vào giỏ hàng</button>` : `<button class="btn" onclick="go('/login')">🛒 Mua công thức · đăng nhập</button>`}
+      ${r.is_locked ? `<div class="panel"><b>🔒 Công thức Premium</b><p style="margin:6px 0 12px">Thêm vào giỏ hàng để thanh toán; sau khi thanh toán thành công, công thức sẽ có trong mục Đã mua.</p>
+        ${API.user ? `<button class="btn" onclick="Pages._addPremiumToCart(${r.id})">🛒 Mua công thức</button>` : `<button class="btn" onclick="go('/login')">🛒 Mua công thức · đăng nhập</button>`}
       </div>` : ""}
       <div><span class="stars">${starHtml(r.avg_rating)}</span> ${r.avg_rating} · ${r.rating_count} đánh giá · 👁 ${r.views} lượt xem</div>
       <div style="margin:10px 0"><span class="badge">${esc(r.category)}</span> <span class="badge">${esc(r.country)}</span>
@@ -594,10 +657,12 @@ Pages.recipe = async (m) => {
         <button class="btn" onclick="Pages._toggleFav(${r.id})" id="favBtn">${r.is_fav ? "💔 Bỏ yêu thích" : "❤️ Yêu thích"}</button>
         ${
           !r.is_locked
-            ? `<button class="btn" onclick="Pages._buyRecipe(${r.id},${!!r.is_premium},${API.user?.id === r.user_id},${!!r.is_locked})">🛒 Mua công thức</button>
-        ${API.user ? `<button class="btn secondary" onclick="Pages._openCollectionPicker(${r.id})">📁 Thêm vào bộ sưu tập</button>
-        <button class="btn secondary" onclick="Pages._addToPlan(${r.id})">📅 Thêm vào thực đơn</button>
-        <button class="btn secondary" onclick="Pages._toShopping(${r.id})">🛒 Thêm nguyên liệu vào danh sách mua</button>` : ""}`
+            ? `${!r.is_premium || API.user?.id === r.user_id || API.user?.role === "admin"
+              ? `<button class="btn" onclick="Pages._buyRecipe(${r.id},${!!r.is_premium},${API.user?.id === r.user_id},${!!r.is_locked})">🛒 Mua công thức</button>`
+              : `<button class="btn" onclick="Pages._addPremiumToCart(${r.id})">🛒 Thêm vào giỏ hàng</button>`}
+        ${API.user ? `<button class="btn secondary" onclick="Pages._openCollectionPicker(${r.id})">📁 Thêm vào bộ sưu tập</button>` : ""}
+        ${API.user ? `<button class="btn secondary" onclick="Pages._addToPlan(${r.id})">📅 Thêm vào thực đơn</button>` : ""}
+        ${API.user ? `<button class="btn secondary" onclick="Pages._toShopping(${r.id})">🛒 Thêm nguyên liệu vào danh sách mua</button>` : ""}`
             : ""
         }
         ${!r.is_locked ? `<button class="btn secondary" onclick="Pages.cookingMode(${JSON.stringify(steps).replace(/"/g, "&quot;")}, '${esc(r.title).replace(/'/g, "\\'")}', ${r.cook_minutes})">👨‍🍳 Cooking Mode</button>` : ""}
@@ -639,14 +704,14 @@ Pages._buyRecipe = (id, isPremium, isOwner, isLocked) => {
   if (!Number.isSafeInteger(recipeId) || recipeId < 1) return toast("Công thức không hợp lệ");
   if (isPremium && !isOwner && isLocked) {
     if (!API.user) return go("/login");
-    return Pages._buyPremium(recipeId);
+    return Pages._addPremiumToCart(recipeId);
   }
   if (isPremium && !isOwner && API.user?.role !== "admin") {
     toast("Bạn đã sở hữu công thức này.");
     return go("/purchases");
   }
   if (isPremium && !isOwner && API.user?.role === "admin")
-    return Pages._buyPremium(recipeId);
+    return Pages._addPremiumToCart(recipeId);
   if (isPremium && isOwner) {
     toast("Đây là công thức của bạn; mở Creator Studio để quản lý bán.");
     return go("/creator");
@@ -655,30 +720,15 @@ Pages._buyRecipe = (id, isPremium, isOwner, isLocked) => {
 };
 
 Pages._addPremiumToCart = async (id) => {
+  if (!API.user) { toast("Vui lòng đăng nhập để mua công thức"); return go("/login"); }
   try {
     await API.post(`/marketplace/cart/${id}`);
     toast("Đã thêm công thức vào giỏ hàng");
     go("/cart");
-  } catch (e) { toast(e.message); }
-};
-Pages._buyPremium = async (id) => {
-  const providers = await API.get("/commerce/providers");
-  openModal(
-    "Chọn cổng thanh toán",
-    `<p class="muted">Chọn cổng thanh toán giả lập. Không phát sinh giao dịch thật.</p>
-    <select id="premiumPaymentProvider" style="width:100%">${providers.payments.map((provider) => `<option value="${provider.id}_mock">${esc(provider.name)} (mô phỏng)</option>`).join("")}</select>
-    <button class="btn" style="margin-top:12px" onclick="Pages._checkoutPremium(${id})">Tạo đơn thanh toán</button>`,
-  );
-};
-Pages._checkoutPremium = async (id) => {
-  try {
-    const result = await API.post("/marketplace/checkout", {
-      recipeId: id,
-      paymentProvider: document.getElementById("premiumPaymentProvider").value,
-    });
-    document.getElementById("modal-ov")?.remove();
-    go(result.paymentUrl.replace(/^\/#/, ""));
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (e.message === "Bạn đã sở hữu công thức này") return go("/purchases");
+    toast(e.message);
+  }
 };
 
 Pages._toggleFav = async (id) => {
@@ -711,15 +761,28 @@ Pages._addToPlan = async (id) => {
     toast(e.message);
   }
 };
-Pages._deleteRecipe = async (id) => {
-  if (!confirm("Xóa công thức này vĩnh viễn?")) return;
-  try {
-    await API.del(`/recipes/${id}`);
-    toast("Đã xóa");
-    go("/");
-  } catch (e) {
-    toast(e.message);
-  }
+Pages._deleteRecipe = (id) => {
+  openModal("Xóa công thức", `
+    <p>Bạn có chắc muốn <b>xóa vĩnh viễn</b> công thức này?</p>
+    <p class="muted">Hành động này không thể hoàn tác.</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn secondary" onclick="document.getElementById('modal-ov').remove()">Hủy</button>
+      <button class="btn danger" id="delConfirmBtn">🗑 Xóa vĩnh viễn</button>
+    </div>`);
+  document.getElementById("delConfirmBtn").onclick = async () => {
+    const btn = document.getElementById("delConfirmBtn");
+    btn.disabled = true;
+    btn.textContent = "Đang xóa...";
+    try {
+      await API.del(`/recipes/${id}`);
+      document.getElementById("modal-ov")?.remove();
+      toast("Đã xóa công thức");
+      go("/profile");
+    } catch (e) {
+      document.getElementById("modal-ov")?.remove();
+      toast(e.message);
+    }
+  };
 };
 
 /* ---------- Cooking Mode ---------- */
@@ -1108,11 +1171,14 @@ Pages.profile = async () => {
     document.getElementById("myRecipes").innerHTML =
       (await API.get("/recipes/mine/list"))
         .map(
-          (r) =>
-            recipeCard(r) +
-            `<div style="margin-top:-6px;background:#fff;padding:0 14px 10px;box-shadow:var(--shadow)">
-          ${!r.is_premium ? `<button class="btn small" onclick="Pages._sellExistingRecipe(${r.id})">${API.user.role === "creator" || API.user.role === "admin" ? "⭐ Đăng bán công thức" : "🍳 Trở thành Creator để bán"}</button> · ` : ""}
-          <a onclick="go('/edit-recipe/${r.id}')">✏️ Sửa</a> · <a onclick="Pages._deleteRecipe(${r.id})">🗑 Xóa</a></div>`,
+          (r) => `<div>
+            ${recipeCard(r)}
+            <div style="display:flex;gap:8px;margin-top:8px">
+          ${!r.is_premium ? `<button class="btn secondary small" onclick="Pages._sellExistingRecipe(${r.id})">${API.user.role === "creator" || API.user.role === "admin" ? "⭐ Đăng bán" : "🍳 Trở thành Creator"}</button>` : ""}
+          <button class="btn secondary small" onclick="go('/edit-recipe/${r.id}')">✏️ Sửa</button>
+          <button class="btn danger small" onclick="Pages._deleteRecipe(${r.id})">🗑 Xóa</button>
+            </div>
+          </div>`,
         )
         .join("") || '<div class="empty">Chưa có công thức nào</div>';
     const h = await API.get("/recipes/history/list");
@@ -1210,9 +1276,9 @@ Pages.recipeForm = async (m, q = {}) => {
     </div>
       ${API.user?.role === "creator" || API.user?.role === "admin" ? `
       <div class="panel" style="margin-top:12px">
-        <label><input id="rfPremium" type="checkbox" ${r.is_premium || q.sell === "1" ? "checked" : ""}> Đăng bán công thức Premium</label>
-        <label>Giá bán (VNĐ)</label><input id="rfPrice" type="number" min="5000" max="99999999" step="1000" value="${r.price || ""}" placeholder="Ví dụ: 50000">
-        <p class="muted">Công thức mới hoặc công thức bạn đã đăng trước đây đều có thể bán. Khi bật Premium, công thức sẽ chờ Admin duyệt trước khi xuất hiện trong Marketplace.</p>
+        <label><input id="rfPremium" type="checkbox" ${r.is_premium || q.sell === "1" ? "checked" : ""} onchange="if(!this.checked)document.getElementById('rfPrice').value=''"> Đăng bán công thức Premium</label>
+        <label>Giá bán (VNĐ)</label><input id="rfPrice" type="number" min="5000" max="99999999" step="1000" value="${r.price || ""}" placeholder="Ví dụ: 50000" oninput="if(Number(this.value)!==0)document.getElementById('rfPremium').checked=true">
+        <p class="muted">Nhập giá sẽ tự bật bán Premium. Công thức cần Admin duyệt trước khi người khác có thể mua.</p>
       </div>` : !editing ? `<div class="panel" style="margin-top:12px">Muốn bán công thức Premium? <a href="#/creator">Đăng ký Creator</a>.</div>` : ""}
     <label>Thông tin dinh dưỡng (mỗi khẩu phần)</label>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
@@ -1269,6 +1335,8 @@ Pages._addStep = () => {
 Pages._saveRecipe = async (id) => {
   const imgPrev = document.getElementById("rfImgPrev").src;
   const v = (id2) => document.getElementById(id2).value;
+  const price = Number(document.getElementById("rfPrice")?.value || 0);
+  const isPremium = !!document.getElementById("rfPremium")?.checked || price !== 0;
   const body = {
     title: v("rfTitle"),
     description: v("rfDesc"),
@@ -1285,8 +1353,8 @@ Pages._saveRecipe = async (id) => {
     difficulty: v("rfDiff"),
     diet: v("rfDiet"),
     is_public: v("rfPub") === "1",
-    is_premium: !!document.getElementById("rfPremium")?.checked,
-    price: Number(document.getElementById("rfPrice")?.value || 0),
+    is_premium: isPremium,
+    price,
     calories: +v("rfCal"),
     protein: +v("rfPro"),
     carbs: +v("rfCarb"),

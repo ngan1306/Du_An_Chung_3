@@ -183,4 +183,25 @@ CREATE TABLE activity_logs (
   created_at DATETIME DEFAULT GETDATE()
 );
 GO
+-- Index hieu nang: FK cot recipe_id / user_id deu phai co index
+-- (khong co index thi DELETE/UPDATE recipes quet toan bo bang con -> rat cham)
+CREATE INDEX IX_recipes_user ON recipes(user_id);
+CREATE INDEX IX_recipes_public ON recipes(is_public, approved) INCLUDE (created_at, views);
+CREATE INDEX IX_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
+CREATE INDEX IX_recipe_ingredients_name ON recipe_ingredients(name);
+CREATE INDEX IX_recipe_steps_recipe ON recipe_steps(recipe_id);
+CREATE INDEX IX_favorites_recipe ON favorites(recipe_id);
+CREATE INDEX IX_favorites_user ON favorites(user_id);
+CREATE INDEX IX_ratings_recipe ON ratings(recipe_id);
+CREATE INDEX IX_collection_items_recipe ON collection_items(recipe_id);
+CREATE INDEX IX_collection_items_collection ON collection_items(collection_id);
+CREATE INDEX IX_posts_recipe ON posts(recipe_id);
+CREATE INDEX IX_posts_user ON posts(user_id);
+CREATE INDEX IX_meal_plans_recipe ON meal_plans(recipe_id);
+CREATE INDEX IX_meal_plans_user ON meal_plans(user_id);
+CREATE INDEX IX_shopping_items_user ON shopping_items(user_id);
+CREATE INDEX IX_notifications_user ON notifications(user_id);
+CREATE INDEX IX_activity_logs_user ON activity_logs(user_id);
+CREATE INDEX IX_comment_likes_rating ON comment_likes(rating_id);
+GO
 PRINT 'Schema OK';

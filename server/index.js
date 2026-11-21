@@ -13,7 +13,10 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(authOptional);
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
-app.use(express.static(path.join(__dirname, "..", "public")));
+app.use(express.static(path.join(__dirname, "..", "public"), {
+  etag: true,
+  setHeaders(res) { res.setHeader("Cache-Control", "no-cache"); },
+}));
 
 // Upload anh (multer)
 const storage = multer.diskStorage({
@@ -38,9 +41,12 @@ app.use("/api/commerce", require("./routes/commerce"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/ai", require("./routes/ai"));
 
-// Home endpoint tong hop (SQL Server)
+// Home endpoint tong hop (SQL Server) - cache 60s de trang chu mo nhanh hon
+let homeCache = { data: null, at: 0 };
 app.get("/api/home", async (_req, res) => {
   try {
+    if (homeCache.data && Date.now() - homeCache.at < 60000)
+      return res.json(homeCache.data);
     const card = `SELECT TOP 6 r.id, r.title, r.image, r.views, r.prep_minutes,
       r.cook_minutes, r.difficulty, r.diet, c.name AS category,
       ISNULL((SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id),0) AS avg_rating
@@ -52,13 +58,15 @@ app.get("/api/home", async (_req, res) => {
       query(`${card} ORDER BY (SELECT AVG(CAST(rt.stars AS FLOAT)) FROM ratings rt WHERE rt.recipe_id=r.id) DESC`),
       query("SELECT * FROM categories"),
     ]);
-    res.json({
+    const data = {
       featured,
       newest,
       popular: featured,
       topRated,
       categories,
-    });
+    };
+    homeCache = { data, at: Date.now() };
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
